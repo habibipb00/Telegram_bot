@@ -66,7 +66,7 @@ except ValueError as e:
     print(f"❌ Configuration Error: {e}")
     sys.exit(1)
 
-# Logging setup
+# Logging setup (FIXED)
 def setup_logging():
     """Setup comprehensive logging"""
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
@@ -74,15 +74,24 @@ def setup_logging():
     # Create logs directory if it doesn't exist
     os.makedirs('logs', exist_ok=True)
     
-    logging.basicConfig(
-        level=getattr(logging, config.LOG_LEVEL.upper()),
-        format=log_format,
-        handlers=[
-            logging.FileHandler('logs/bot.log'),
-            logging.FileHandler('logs/error.log', level=logging.ERROR),
-            logging.StreamHandler()
-        ]
-    )
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, config.LOG_LEVEL.upper()))
+
+    # Bot log handler (all logs)
+    bot_log_handler = logging.FileHandler('logs/bot.log')
+    bot_log_handler.setFormatter(logging.Formatter(log_format))
+    root_logger.addHandler(bot_log_handler)
+
+    # Error log handler (only errors and above)
+    error_log_handler = logging.FileHandler('logs/error.log')
+    error_log_handler.setLevel(logging.ERROR)
+    error_log_handler.setFormatter(logging.Formatter(log_format))
+    root_logger.addHandler(error_log_handler)
+
+    # Console log handler
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(logging.Formatter(log_format))
+    root_logger.addHandler(stream_handler)
     
     # Reduce telebot logging noise
     logging.getLogger('urllib3').setLevel(logging.WARNING)
@@ -90,6 +99,15 @@ def setup_logging():
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# ---- Baaki aapka original code, as it is, idhar se niche se continue karen. ----
+# Bas setup_logging() function upar wala use karo, jo fix kiya gaya hai.
+# Aapke code ka koi aur part error nahi kar raha, sirf logging wala issue tha.
+
+# ... (Aapka code jaisa hai waise hi paste kar dein logging ke baad se) ...
+
+# NOTE: Agar aap original main.py ka baaki ka code chahte hain toh woh code aapne already diya, 
+# sirf setup_logging() yeh fix use karen.
 
 # Global variables
 bot = None

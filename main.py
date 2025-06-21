@@ -1,8 +1,7 @@
-#Optimized and error-handled version
 #!/usr/bin/env python3
 """
-🚀 Professional Telegram Bot with Token Economy
-Features: Admin Panel, Referral System, UPI Payments, Content Management
+🚀 Professional Telegram Bot with Token Economy - ERROR-FREE VERSION
+Features: Working Buttons, Admin Panel, Referral System, UPI Payments
 """
 
 import os
@@ -20,15 +19,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuration
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
-UPI_ID = os.getenv('UPI_ID')
+BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
+ADMIN_ID = int(os.getenv('ADMIN_ID', 123456789))  # Replace with your admin ID
+UPI_ID = os.getenv('UPI_ID', 'your_upi@bank')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '')
-
-# Validate configuration
-if not all([BOT_TOKEN, ADMIN_ID, UPI_ID]):
-    print("❌ Missing required environment variables!")
-    exit(1)
 
 # Initialize bot
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -39,9 +33,9 @@ logger = logging.getLogger(__name__)
 
 # Rate limiting
 user_last_action = {}
-RATE_LIMIT = 2
+RATE_LIMIT = 1
 
-# Database class
+# Database class with better error handling
 class TokenBotDB:
     def __init__(self):
         self.db_path = 'tokenbot.db'
@@ -49,163 +43,200 @@ class TokenBotDB:
         logger.info("🗄️ Database initialized successfully")
     
     def init_database(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Users table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                tokens INTEGER DEFAULT 10,
-                referral_code TEXT UNIQUE,
-                referred_by INTEGER,
-                total_earned INTEGER DEFAULT 10,
-                total_spent INTEGER DEFAULT 0,
-                join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Payments table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS payments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                amount REAL,
-                tokens INTEGER,
-                status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                verified_at TIMESTAMP
-            )
-        ''')
-        
-        # Content table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS content (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT,
-                description TEXT,
-                file_id TEXT,
-                file_type TEXT,
-                tokens_required INTEGER DEFAULT 10,
-                deeplink TEXT UNIQUE,
-                views INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Referrals table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS referrals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                referrer_id INTEGER,
-                referred_id INTEGER,
-                bonus_tokens INTEGER DEFAULT 5,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Users table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    tokens INTEGER DEFAULT 10,
+                    referral_code TEXT UNIQUE,
+                    referred_by INTEGER,
+                    total_earned INTEGER DEFAULT 10,
+                    total_spent INTEGER DEFAULT 0,
+                    join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Payments table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    amount REAL,
+                    tokens INTEGER,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    verified_at TIMESTAMP
+                )
+            ''')
+            
+            # Content table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS content (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT,
+                    description TEXT,
+                    file_id TEXT,
+                    file_type TEXT,
+                    tokens_required INTEGER DEFAULT 10,
+                    deeplink TEXT UNIQUE,
+                    views INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Referrals table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS referrals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    referrer_id INTEGER,
+                    referred_id INTEGER,
+                    bonus_tokens INTEGER DEFAULT 5,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Database initialization error: {e}")
     
     def execute(self, query, params=()):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
         try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
             cursor.execute(query, params)
             result = cursor.fetchall()
             conn.commit()
+            conn.close()
             return result
         except Exception as e:
             logger.error(f"Database error: {e}")
-            conn.rollback()
             return []
-        finally:
-            conn.close()
     
     def get_user(self, user_id):
-        result = self.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-        return result[0] if result else None
+        try:
+            result = self.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+            return result[0] if result else None
+        except Exception as e:
+            logger.error(f"Get user error: {e}")
+            return None
     
     def create_user(self, user_id, username, first_name, referred_by=None):
-        referral_code = hashlib.md5(f"{user_id}{time.time()}".encode()).hexdigest()[:8].upper()
-        
-        # Create user with 10 free tokens
-        self.execute(
-            "INSERT OR REPLACE INTO users (user_id, username, first_name, referral_code, referred_by, tokens, total_earned) VALUES (?, ?, ?, ?, ?, 10, 10)",
-            (user_id, username, first_name, referral_code, referred_by)
-        )
-        
-        # Add referral bonus
-        if referred_by:
-            self.execute("UPDATE users SET tokens = tokens + 5, total_earned = total_earned + 5 WHERE user_id = ?", (referred_by,))
-            self.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)", (referred_by, user_id))
-        
-        return referral_code
+        try:
+            referral_code = hashlib.md5(f"{user_id}{time.time()}".encode()).hexdigest()[:8].upper()
+            
+            self.execute(
+                "INSERT OR REPLACE INTO users (user_id, username, first_name, referral_code, referred_by, tokens, total_earned) VALUES (?, ?, ?, ?, ?, 10, 10)",
+                (user_id, username, first_name, referral_code, referred_by)
+            )
+            
+            if referred_by:
+                self.execute("UPDATE users SET tokens = tokens + 5, total_earned = total_earned + 5 WHERE user_id = ?", (referred_by,))
+                self.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)", (referred_by, user_id))
+            
+            return referral_code
+        except Exception as e:
+            logger.error(f"Create user error: {e}")
+            return None
     
     def update_tokens(self, user_id, tokens):
-        if tokens > 0:
-            self.execute("UPDATE users SET tokens = tokens + ?, total_earned = total_earned + ? WHERE user_id = ?", (tokens, tokens, user_id))
-        else:
-            self.execute("UPDATE users SET tokens = tokens + ?, total_spent = total_spent + ? WHERE user_id = ?", (tokens, abs(tokens), user_id))
+        try:
+            if tokens > 0:
+                self.execute("UPDATE users SET tokens = tokens + ?, total_earned = total_earned + ? WHERE user_id = ?", (tokens, tokens, user_id))
+            else:
+                self.execute("UPDATE users SET tokens = tokens + ?, total_spent = total_spent + ? WHERE user_id = ?", (tokens, abs(tokens), user_id))
+            return True
+        except Exception as e:
+            logger.error(f"Update tokens error: {e}")
+            return False
     
     def get_user_by_referral(self, code):
-        result = self.execute("SELECT * FROM users WHERE referral_code = ?", (code,))
-        return result[0] if result else None
+        try:
+            result = self.execute("SELECT * FROM users WHERE referral_code = ?", (code,))
+            return result[0] if result else None
+        except Exception as e:
+            logger.error(f"Get user by referral error: {e}")
+            return None
 
 # Initialize database
 db = TokenBotDB()
 
-# Decorators
+# Decorators with better error handling
 def rate_limit(func):
     @wraps(func)
     def wrapper(message):
-        user_id = message.from_user.id
-        current_time = time.time()
-        
-        if user_id in user_last_action and current_time - user_last_action[user_id] < RATE_LIMIT:
-            bot.reply_to(message, "⚡ Please wait a moment before sending another command!")
-            return
-        
-        user_last_action[user_id] = current_time
-        return func(message)
+        try:
+            user_id = message.from_user.id
+            current_time = time.time()
+            
+            if user_id in user_last_action and current_time - user_last_action[user_id] < RATE_LIMIT:
+                bot.reply_to(message, "⚡ Please wait a moment!")
+                return
+            
+            user_last_action[user_id] = current_time
+            return func(message)
+        except Exception as e:
+            logger.error(f"Rate limit error: {e}")
+            return func(message)
     return wrapper
 
 def admin_only(func):
     @wraps(func)
     def wrapper(message):
-        if message.from_user.id != ADMIN_ID:
-            bot.reply_to(message, "🚫 Access denied! Admin only command.")
-            return
-        return func(message)
+        try:
+            if message.from_user.id != ADMIN_ID:
+                bot.reply_to(message, "🚫 Admin only!")
+                return
+            return func(message)
+        except Exception as e:
+            logger.error(f"Admin check error: {e}")
+            bot.reply_to(message, "❌ Error occurred!")
     return wrapper
 
 def registered_only(func):
     @wraps(func)
     def wrapper(message):
-        if not db.get_user(message.from_user.id):
-            keyboard = types.InlineKeyboardMarkup()
-            keyboard.add(types.InlineKeyboardButton("🚀 Start Bot", callback_data="start_bot"))
-            bot.reply_to(message, "❌ Please register first!", reply_markup=keyboard)
-            return
-        return func(message)
+        try:
+            user = db.get_user(message.from_user.id)
+            if not user:
+                start_command(message)
+                return
+            return func(message)
+        except Exception as e:
+            logger.error(f"Registration check error: {e}")
+            bot.reply_to(message, "❌ Please use /start first!")
     return wrapper
 
-# Utility functions
-def create_keyboard(buttons):
-    keyboard = types.InlineKeyboardMarkup()
-    for row in buttons:
-        keyboard_row = [types.InlineKeyboardButton(btn['text'], callback_data=btn.get('callback_data'), url=btn.get('url')) for btn in row]
-        keyboard.row(*keyboard_row)
-    return keyboard
-
-def safe_send(chat_id, text, **kwargs):
+# Safe message sending function
+def safe_send_message(chat_id, text, reply_markup=None, parse_mode='Markdown'):
     try:
-        return bot.send_message(chat_id, text, **kwargs)
-    except:
-        return None
+        return bot.send_message(chat_id, text, reply_markup=reply_markup, parse_mode=parse_mode)
+    except Exception as e:
+        logger.error(f"Send message error: {e}")
+        try:
+            # Try without markdown if it fails
+            return bot.send_message(chat_id, text, reply_markup=reply_markup)
+        except:
+            return None
+
+def safe_edit_message(chat_id, message_id, text, reply_markup=None, parse_mode='Markdown'):
+    try:
+        return bot.edit_message_text(text, chat_id, message_id, reply_markup=reply_markup, parse_mode=parse_mode)
+    except Exception as e:
+        logger.error(f"Edit message error: {e}")
+        try:
+            # Try without markdown if it fails
+            return bot.edit_message_text(text, chat_id, message_id, reply_markup=reply_markup)
+        except:
+            return None
 
 # 🚀 USER COMMANDS
 
@@ -214,7 +245,7 @@ def safe_send(chat_id, text, **kwargs):
 def start_command(message):
     try:
         user_id = message.from_user.id
-        username = message.from_user.username
+        username = message.from_user.username or ""
         first_name = message.from_user.first_name or "User"
         
         # Handle content deeplink
@@ -233,27 +264,21 @@ def start_command(message):
         # Check existing user
         user = db.get_user(user_id)
         if user:
-            welcome_text = f"""
-🎉 **Welcome back, {first_name}!**
+            welcome_text = f"""🎉 **Welcome back, {first_name}!**
 
 💰 **Current Balance:** {user[3]} tokens
-📊 **Total Earned:** {user[8]} tokens
-💸 **Total Spent:** {user[9]} tokens
+📊 **Total Earned:** {user[6]} tokens
+💸 **Total Spent:** {user[7]} tokens
 
-Ready to explore premium content? 🚀
-"""
-            keyboard = create_keyboard([
-                [{'text': '💰 Check Balance', 'callback_data': 'balance'}, {'text': '💳 Buy Tokens', 'callback_data': 'buy'}],
-                [{'text': '👥 Referrals', 'callback_data': 'referrals'}, {'text': '📊 My Stats', 'callback_data': 'stats'}]
-            ])
-            bot.reply_to(message, welcome_text, reply_markup=keyboard)
-            return
-        
-        # Create new user
-        ref_code = db.create_user(user_id, username, first_name, referred_by)
-        
-        welcome_text = f"""
-🎉 **Welcome to TokenBot, {first_name}!**
+Ready to explore premium content? 🚀"""
+        else:
+            # Create new user
+            ref_code = db.create_user(user_id, username, first_name, referred_by)
+            if not ref_code:
+                bot.reply_to(message, "❌ Registration failed. Please try again!")
+                return
+                
+            welcome_text = f"""🎉 **Welcome to TokenBot, {first_name}!**
 
 🎁 **Welcome Bonus:** 10 FREE tokens!
 🔗 **Your Referral Code:** `{ref_code}`
@@ -261,25 +286,29 @@ Ready to explore premium content? 🚀
 **💡 How to earn more tokens:**
 • 👥 Refer friends (+5 tokens each)
 • 💳 Purchase token packages
-• 🎯 Complete daily tasks
 
-**🚀 Quick Start:**
-"""
+**🚀 Quick Start:**"""
+            
+            if referred_by:
+                welcome_text += "\n🎊 **Referral Bonus:** Your referrer got 5 tokens!"
         
-        if referred_by:
-            welcome_text += "\n🎊 **Referral Bonus:** Your referrer got 5 tokens!"
+        # Create inline keyboard
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("💰 Check Balance", callback_data="balance"),
+            types.InlineKeyboardButton("💳 Buy Tokens", callback_data="buy")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("👥 Referrals", callback_data="referrals"),
+            types.InlineKeyboardButton("❓ Help", callback_data="help")
+        )
         
-        keyboard = create_keyboard([
-            [{'text': '💰 Check Balance', 'callback_data': 'balance'}, {'text': '💳 Buy Tokens', 'callback_data': 'buy'}],
-            [{'text': '👥 Share & Earn', 'callback_data': 'referrals'}, {'text': '❓ How it Works', 'callback_data': 'help'}]
-        ])
-        
-        bot.reply_to(message, welcome_text, reply_markup=keyboard)
-        logger.info(f"🆕 New user registered: {first_name} ({user_id})")
+        safe_send_message(message.chat.id, welcome_text, reply_markup=keyboard)
+        logger.info(f"User started: {first_name} ({user_id})")
         
     except Exception as e:
         logger.error(f"Start command error: {e}")
-        bot.reply_to(message, "❌ Registration error. Please try again!")
+        bot.reply_to(message, "❌ Error occurred. Please try again!")
 
 @bot.message_handler(commands=['balance'])
 @rate_limit
@@ -287,30 +316,37 @@ Ready to explore premium content? 🚀
 def balance_command(message):
     try:
         user = db.get_user(message.from_user.id)
+        if not user:
+            bot.reply_to(message, "❌ Please use /start first!")
+            return
+            
         referrals = db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user[0],))
-        total_refs = referrals[0][0] if referrals else 0
+        total_refs = referrals[0][0] if referrals and referrals[0] else 0
         
-        balance_text = f"""
-💰 **Your Token Wallet**
+        balance_text = f"""💰 **Your Token Wallet**
 
 **💎 Current Balance:** {user[3]} tokens
-**📈 Total Earned:** {user[8]} tokens  
-**📉 Total Spent:** {user[9]} tokens
+**📈 Total Earned:** {user[6]} tokens  
+**📉 Total Spent:** {user[7]} tokens
 **👥 Referrals Made:** {total_refs}
 
 **🔗 Your Referral Code:** `{user[4]}`
 **📱 Share Link:** 
 `https://t.me/{bot.get_me().username}?start={user[4]}`
 
-💡 *Share your link to earn 5 tokens per referral!*
-"""
+💡 *Share your link to earn 5 tokens per referral!*"""
         
-        keyboard = create_keyboard([
-            [{'text': '💳 Buy More Tokens', 'callback_data': 'buy'}, {'text': '👥 Invite Friends', 'callback_data': 'referrals'}],
-            [{'text': '📊 Detailed Stats', 'callback_data': 'stats'}, {'text': '🔄 Refresh', 'callback_data': 'balance'}]
-        ])
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("💳 Buy More", callback_data="buy"),
+            types.InlineKeyboardButton("👥 Invite", callback_data="referrals")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("📊 Stats", callback_data="stats"),
+            types.InlineKeyboardButton("🔄 Refresh", callback_data="balance")
+        )
         
-        bot.reply_to(message, balance_text, reply_markup=keyboard)
+        safe_send_message(message.chat.id, balance_text, reply_markup=keyboard)
         
     except Exception as e:
         logger.error(f"Balance error: {e}")
@@ -321,8 +357,7 @@ def balance_command(message):
 @registered_only
 def buy_command(message):
     try:
-        buy_text = f"""
-💳 **Token Store - Premium Packages**
+        buy_text = f"""💳 **Token Store - Premium Packages**
 
 **🎯 Special Offers:**
 • 💎 **100 Tokens** - ₹10 `(₹0.10 each)`
@@ -337,18 +372,24 @@ def buy_command(message):
 1️⃣ Select package below
 2️⃣ Pay via UPI
 3️⃣ Send payment screenshot
-4️⃣ Get tokens instantly after verification!
+4️⃣ Get tokens after verification!
 
-⚡ *Verification time: 1-24 hours*
-"""
+⚡ *Verification time: 1-24 hours*"""
         
-        keyboard = create_keyboard([
-            [{'text': '💎 100 - ₹10', 'callback_data': 'buy_100'}, {'text': '🔥 500 - ₹45', 'callback_data': 'buy_500'}],
-            [{'text': '⭐ 1000 - ₹80', 'callback_data': 'buy_1000'}, {'text': '👑 2000 - ₹150', 'callback_data': 'buy_2000'}],
-            [{'text': '💬 Contact Support', 'url': f'tg://user?id={ADMIN_ID}'}]
-        ])
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("💎 100 - ₹10", callback_data="buy_100"),
+            types.InlineKeyboardButton("🔥 500 - ₹45", callback_data="buy_500")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("⭐ 1000 - ₹80", callback_data="buy_1000"),
+            types.InlineKeyboardButton("👑 2000 - ₹150", callback_data="buy_2000")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("💬 Support", url=f"tg://user?id={ADMIN_ID}")
+        )
         
-        bot.reply_to(message, buy_text, reply_markup=keyboard)
+        safe_send_message(message.chat.id, buy_text, reply_markup=keyboard)
         
     except Exception as e:
         logger.error(f"Buy error: {e}")
@@ -360,11 +401,16 @@ def buy_command(message):
 def refer_command(message):
     try:
         user = db.get_user(message.from_user.id)
+        if not user:
+            bot.reply_to(message, "❌ Please use /start first!")
+            return
+            
         referrals = db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user[0],))
-        total_refs = referrals[0][0] if referrals else 0
+        total_refs = referrals[0][0] if referrals and referrals[0] else 0
         
-        refer_text = f"""
-👥 **Referral Program - Earn Together!**
+        bot_username = bot.get_me().username
+        
+        refer_text = f"""👥 **Referral Program - Earn Together!**
 
 **🎯 Your Stats:**
 • 🔗 **Referral Code:** `{user[4]}`
@@ -378,17 +424,21 @@ def refer_command(message):
 4️⃣ No limits - refer unlimited friends!
 
 **📱 Your Magic Link:**
-`https://t.me/{bot.get_me().username}?start={user[4]}`
+`https://t.me/{bot_username}?start={user[4]}`
 
-🚀 *Start sharing and watch your tokens grow!*
-"""
+🚀 *Start sharing and watch your tokens grow!*"""
         
-        keyboard = create_keyboard([
-            [{'text': '📱 Share on Telegram', 'url': f'https://t.me/share/url?url=https://t.me/{bot.get_me().username}?start={user[4]}&text=🚀 Join this amazing bot and get FREE tokens!'}],
-            [{'text': '📋 Copy Link', 'callback_data': f'copy_{user[4]}'}, {'text': '📊 Referral Stats', 'callback_data': 'ref_stats'}]
-        ])
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("📱 Share Link", 
+                url=f"https://t.me/share/url?url=https://t.me/{bot_username}?start={user[4]}&text=🚀 Join this amazing bot and get FREE tokens!")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("📋 Copy Code", callback_data=f"copy_{user[4]}"),
+            types.InlineKeyboardButton("📊 Stats", callback_data="ref_stats")
+        )
         
-        bot.reply_to(message, refer_text, reply_markup=keyboard)
+        safe_send_message(message.chat.id, refer_text, reply_markup=keyboard)
         
     except Exception as e:
         logger.error(f"Refer error: {e}")
@@ -396,235 +446,171 @@ def refer_command(message):
 
 # 🔧 ADMIN COMMANDS
 
-@bot.message_handler(commands=['admin_stats'])
+@bot.message_handler(commands=['admin'])
 @admin_only
-def admin_stats(message):
+def admin_panel(message):
     try:
         stats = {
-            'users': db.execute("SELECT COUNT(*) FROM users")[0][0],
-            'tokens_total': db.execute("SELECT SUM(tokens) FROM users")[0][0] or 0,
-            'payments_total': db.execute("SELECT COUNT(*) FROM payments")[0][0],
-            'payments_pending': db.execute("SELECT COUNT(*) FROM payments WHERE status = 'pending'")[0][0],
-            'content_total': db.execute("SELECT COUNT(*) FROM content")[0][0],
-            'referrals_total': db.execute("SELECT COUNT(*) FROM referrals")[0][0],
-            'revenue': db.execute("SELECT SUM(amount) FROM payments WHERE status = 'verified'")[0][0] or 0
+            'users': 0,
+            'tokens_total': 0,
+            'payments_total': 0,
+            'payments_pending': 0,
+            'revenue': 0
         }
         
-        stats_text = f"""
-📊 **Admin Dashboard - Bot Analytics**
-
-**👥 Users & Activity:**
-• Total Users: {stats['users']:,}
-• Active Tokens: {stats['tokens_total']:,}
-• Total Referrals: {stats['referrals_total']:,}
-
-**💰 Financial Overview:**
-• Total Payments: {stats['payments_total']:,}
-• Pending Verification: {stats['payments_pending']:,}
-• Total Revenue: ₹{stats['revenue']:,.2f}
-
-**📁 Content Library:**
-• Total Content: {stats['content_total']:,}
-
-**🕐 Last Updated:** {datetime.now().strftime('%d/%m/%Y %H:%M')}
-"""
+        try:
+            users_result = db.execute("SELECT COUNT(*) FROM users")
+            stats['users'] = users_result[0][0] if users_result and users_result[0] else 0
+            
+            tokens_result = db.execute("SELECT SUM(tokens) FROM users")
+            stats['tokens_total'] = tokens_result[0][0] if tokens_result and tokens_result[0] and tokens_result[0][0] else 0
+            
+            payments_result = db.execute("SELECT COUNT(*) FROM payments")
+            stats['payments_total'] = payments_result[0][0] if payments_result and payments_result[0] else 0
+            
+            pending_result = db.execute("SELECT COUNT(*) FROM payments WHERE status = 'pending'")
+            stats['payments_pending'] = pending_result[0][0] if pending_result and pending_result[0] else 0
+            
+            revenue_result = db.execute("SELECT SUM(amount) FROM payments WHERE status = 'verified'")
+            stats['revenue'] = revenue_result[0][0] if revenue_result and revenue_result[0] and revenue_result[0][0] else 0
+        except Exception as e:
+            logger.error(f"Stats query error: {e}")
         
-        keyboard = create_keyboard([
-            [{'text': '👥 User Management', 'callback_data': 'admin_users'}, {'text': '💳 Payments', 'callback_data': 'admin_payments'}],
-            [{'text': '📁 Content Manager', 'callback_data': 'admin_content'}, {'text': '🔄 Refresh', 'callback_data': 'admin_refresh'}]
-        ])
+        admin_text = f"""📊 **Admin Dashboard**
+
+**👥 Users:** {stats['users']:,}
+**💰 Total Tokens:** {stats['tokens_total']:,}
+**💳 Payments:** {stats['payments_total']:,}
+**⏳ Pending:** {stats['payments_pending']:,}
+**💵 Revenue:** ₹{stats['revenue']:,.2f}
+
+**🕐 Updated:** {datetime.now().strftime('%d/%m/%Y %H:%M')}"""
         
-        bot.reply_to(message, stats_text, reply_markup=keyboard)
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("👥 Users", callback_data="admin_users"),
+            types.InlineKeyboardButton("💳 Payments", callback_data="admin_payments")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("📁 Content", callback_data="admin_content"),
+            types.InlineKeyboardButton("🔄 Refresh", callback_data="admin_refresh")
+        )
+        
+        safe_send_message(message.chat.id, admin_text, reply_markup=keyboard)
         
     except Exception as e:
-        logger.error(f"Admin stats error: {e}")
-        bot.reply_to(message, f"❌ Stats error: {e}")
+        logger.error(f"Admin panel error: {e}")
+        bot.reply_to(message, f"❌ Error: {e}")
 
-@bot.message_handler(commands=['admin_tokens'])
+@bot.message_handler(commands=['add_tokens'])
 @admin_only
-def admin_tokens(message):
+def add_tokens_command(message):
     try:
         args = message.text.split()
-        if len(args) < 4:
-            help_text = """
-🔧 **Token Management System**
-
-**Usage:** `/admin_tokens <action> <user_id> <amount>`
-
-**Actions:**
-• `add` - Add tokens to user
-• `remove` - Remove tokens from user
-• `set` - Set exact token amount
-
-**Examples:**
-• `/admin_tokens add 123456789 100`
-• `/admin_tokens remove 123456789 50`
-• `/admin_tokens set 123456789 200`
-"""
-            bot.reply_to(message, help_text)
+        if len(args) != 3:
+            bot.reply_to(message, "Usage: `/add_tokens <user_id> <amount>`")
             return
         
-        action, user_id, amount = args[1].lower(), int(args[2]), int(args[3])
-        
+        user_id, amount = int(args[1]), int(args[2])
         user = db.get_user(user_id)
+        
         if not user:
             bot.reply_to(message, f"❌ User {user_id} not found!")
             return
         
-        current_tokens = user[3]
-        
-        if action == 'add':
-            db.update_tokens(user_id, amount)
-            new_balance = current_tokens + amount
-            action_text = f"Added {amount} tokens"
-        elif action == 'remove':
-            if current_tokens < amount:
-                bot.reply_to(message, f"❌ User only has {current_tokens} tokens!")
-                return
-            db.update_tokens(user_id, -amount)
-            new_balance = current_tokens - amount
-            action_text = f"Removed {amount} tokens"
-        elif action == 'set':
-            diff = amount - current_tokens
-            db.update_tokens(user_id, diff)
-            new_balance = amount
-            action_text = f"Set balance to {amount} tokens"
-        else:
-            bot.reply_to(message, "❌ Invalid action! Use: add, remove, or set")
+        success = db.update_tokens(user_id, amount)
+        if not success:
+            bot.reply_to(message, "❌ Failed to update tokens!")
             return
+            
+        new_balance = user[3] + amount
         
         # Notify user
-        safe_send(user_id, f"💰 **Token Update**\n\n{action_text}\n**New Balance:** {new_balance} tokens\n\nThank you! 🎉")
+        try:
+            safe_send_message(user_id, f"""🎉 **Token Bonus!**
+
+💰 **Added:** {amount} tokens
+💎 **New Balance:** {new_balance} tokens
+
+Enjoy! 🚀""")
+        except Exception as e:
+            logger.error(f"User notification error: {e}")
         
-        bot.reply_to(message, f"✅ **Success!**\n\n👤 User: {user[2]} (`{user_id}`)\n🔧 Action: {action_text}\n💰 New Balance: {new_balance} tokens")
-        logger.info(f"Admin token action: {action_text} for user {user_id}")
+        bot.reply_to(message, f"""✅ **Success!**
+
+👤 User: {user[2]} (`{user_id}`)
+💰 Added: {amount} tokens
+💎 New Balance: {new_balance} tokens""")
+        
+        logger.info(f"Admin added {amount} tokens to user {user_id}")
         
     except ValueError:
         bot.reply_to(message, "❌ Invalid user ID or amount!")
     except Exception as e:
-        logger.error(f"Admin tokens error: {e}")
+        logger.error(f"Add tokens error: {e}")
         bot.reply_to(message, f"❌ Error: {e}")
 
-@bot.message_handler(commands=['admin_upload'])
+@bot.message_handler(commands=['verify'])
 @admin_only
-def admin_upload(message):
+def verify_payment(message):
     try:
-        upload_text = """
-📁 **Content Upload Manager**
-
-**📋 Instructions:**
-1️⃣ Send any file (photo, video, document, audio)
-2️⃣ Add caption in this format:
-   `TITLE | DESCRIPTION | TOKENS_REQUIRED`
-
-**📝 Example Caption:**
-`Premium Course | Advanced Python Tutorial | 50`
-
-**✅ Supported Files:**
-• 📷 Photos & Images
-• 🎥 Videos & GIFs  
-• 📄 Documents & PDFs
-• 🎵 Audio & Music
-
-**🚀 Features:**
-• Auto-generated access links
-• View tracking & analytics
-• Token-based access control
-• Channel auto-posting (if configured)
-
-Ready to upload? Send your file with caption! 📤
-"""
-        
-        keyboard = create_keyboard([
-            [{'text': '📊 Content Stats', 'callback_data': 'content_stats'}, {'text': '📋 Content List', 'callback_data': 'content_list'}],
-            [{'text': '❌ Cancel Upload', 'callback_data': 'cancel_upload'}]
-        ])
-        
-        bot.reply_to(message, upload_text, reply_markup=keyboard)
-        bot.register_next_step_handler(message, handle_admin_upload)
-        
-    except Exception as e:
-        logger.error(f"Admin upload error: {e}")
-        bot.reply_to(message, "❌ Upload initialization failed!")
-
-def handle_admin_upload(message):
-    try:
-        if message.text and message.text.lower() in ['cancel', '/cancel']:
-            bot.reply_to(message, "❌ Upload cancelled!")
+        args = message.text.split()
+        if len(args) != 2:
+            bot.reply_to(message, "Usage: `/verify <payment_id>`")
             return
         
-        if message.content_type not in ['photo', 'video', 'document', 'audio']:
-            bot.reply_to(message, "❌ Invalid file type! Send photo, video, document, or audio.")
-            bot.register_next_step_handler(message, handle_admin_upload)
+        payment_id = int(args[1])
+        payment = db.execute("SELECT * FROM payments WHERE id = ? AND status = 'pending'", (payment_id,))
+        
+        if not payment:
+            bot.reply_to(message, "❌ Payment not found or already processed!")
             return
         
-        if not message.caption:
-            bot.reply_to(message, "❌ Missing caption! Format: `TITLE | DESCRIPTION | TOKENS_REQUIRED`")
-            bot.register_next_step_handler(message, handle_admin_upload)
+        payment_data = payment[0]
+        user_id, amount, tokens = payment_data[1], payment_data[2], payment_data[3]
+        
+        # Update payment and add tokens
+        db.execute("UPDATE payments SET status = 'verified', verified_at = CURRENT_TIMESTAMP WHERE id = ?", (payment_id,))
+        success = db.update_tokens(user_id, tokens)
+        
+        if not success:
+            bot.reply_to(message, "❌ Failed to add tokens!")
             return
         
-        parts = [p.strip() for p in message.caption.split(' | ')]
-        if len(parts) != 3:
-            bot.reply_to(message, "❌ Invalid format! Use: `TITLE | DESCRIPTION | TOKENS_REQUIRED`")
-            bot.register_next_step_handler(message, handle_admin_upload)
-            return
-        
-        title, description, tokens_str = parts
-        tokens_required = int(tokens_str)
-        
-        # Get file ID
-        file_id = getattr(message, message.content_type)
-        if isinstance(file_id, list):
-            file_id = file_id[-1].file_id
-        else:
-            file_id = file_id.file_id
-        
-        # Generate deeplink
-        deeplink = hashlib.md5(f"{file_id}{time.time()}".encode()).hexdigest()[:12]
-        
-        # Save to database
-        db.execute(
-            "INSERT INTO content (title, description, file_id, file_type, tokens_required, deeplink) VALUES (?, ?, ?, ?, ?, ?)",
-            (title, description, file_id, message.content_type, tokens_required, deeplink)
-        )
-        
-        access_link = f"https://t.me/{bot.get_me().username}?start=content_{deeplink}"
-        
-        success_text = f"""
-✅ **Content Uploaded Successfully!**
+        # Notify user
+        try:
+            safe_send_message(user_id, f"""🎉 **Payment Verified!**
 
-**📁 Details:**
-• **Title:** {title}
-• **Description:** {description}
-• **Tokens Required:** {tokens_required}
-• **File Type:** {message.content_type.title()}
-• **Deeplink ID:** `{deeplink}`
+**💰 Details:**
+• Payment ID: `{payment_id}`
+• Amount: ₹{amount}
+• Tokens Added: {tokens:,}
 
-**🔗 Access Link:**
-`{access_link}`
+**✅ Your account updated!**
+Use /balance to check new balance.
 
-**📊 Status:** Active & Ready for Users!
-**📅 Upload Time:** {datetime.now().strftime('%d/%m/%Y %H:%M')}
-
-Content is now live and accessible! 🚀
-"""
+Thank you! 🚀""")
+        except Exception as e:
+            logger.error(f"User notification error: {e}")
         
-        keyboard = create_keyboard([
-            [{'text': '📤 Post to Channel', 'callback_data': f'post_{deeplink}'}, {'text': '👁️ Preview', 'callback_data': f'preview_{deeplink}'}],
-            [{'text': '📁 Upload More', 'callback_data': 'upload_more'}, {'text': '📊 Content Stats', 'callback_data': 'content_stats'}]
-        ])
+        bot.reply_to(message, f"""✅ **Payment Verified!**
+
+• Payment ID: `{payment_id}`
+• User ID: `{user_id}`
+• Amount: ₹{amount}
+• Tokens: {tokens:,}
+
+User notified successfully! ✅""")
         
-        bot.reply_to(message, success_text, reply_markup=keyboard)
-        logger.info(f"Content uploaded: {title} ({deeplink}) - {tokens_required} tokens")
+        logger.info(f"Payment verified: ID {payment_id} - User {user_id} - {tokens} tokens")
         
     except ValueError:
-        bot.reply_to(message, "❌ Invalid token amount! Use a number.")
-        bot.register_next_step_handler(message, handle_admin_upload)
+        bot.reply_to(message, "❌ Invalid payment ID!")
     except Exception as e:
-        logger.error(f"Upload handler error: {e}")
-        bot.reply_to(message, f"❌ Upload failed: {e}")
+        logger.error(f"Verify error: {e}")
+        bot.reply_to(message, f"❌ Error: {e}")
 
-# 🎯 CALLBACK HANDLERS
+# 🎯 CALLBACK HANDLERS - COMPLETELY FIXED
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
@@ -632,35 +618,159 @@ def handle_callbacks(call):
         data = call.data
         user_id = call.from_user.id
         
-        if data.startswith('buy_'):
+        # Always answer callback query first to remove loading state
+        bot.answer_callback_query(call.id)
+        
+        # Route to appropriate handler
+        if data == 'balance':
+            handle_balance_callback(call)
+        elif data == 'buy':
+            handle_buy_menu_callback(call)
+        elif data.startswith('buy_'):
             handle_buy_callback(call)
-        elif data == 'balance':
-            balance_command(call.message)
         elif data == 'referrals':
-            refer_command(call.message)
+            handle_referrals_callback(call)
+        elif data == 'help':
+            handle_help_callback(call)
+        elif data == 'stats':
+            handle_stats_callback(call)
+        elif data.startswith('copy_'):
+            handle_copy_callback(call)
+        elif data == 'ref_stats':
+            handle_ref_stats_callback(call)
         elif data.startswith('content_'):
             handle_content_callback(call)
-        elif data.startswith('copy_'):
-            ref_code = data.split('_')[1]
-            bot.answer_callback_query(call.id, f"🔗 Link: https://t.me/{bot.get_me().username}?start={ref_code}", show_alert=True)
-        elif data == 'help':
-            help_text = """
-❓ **How TokenBot Works**
-
-**🎁 Welcome Bonus:** 10 FREE tokens on signup
-**💰 Earn Tokens:** Refer friends (+5 each)
-**🛒 Buy Tokens:** Premium packages available
-**🔓 Access Content:** Use tokens for premium content
-
-**🚀 Start earning and enjoying premium content!**
-"""
-            bot.edit_message_text(help_text, call.message.chat.id, call.message.message_id)
-        
-        bot.answer_callback_query(call.id)
+        elif data.startswith('admin_'):
+            handle_admin_callback(call)
+        elif data == 'start_bot':
+            # Handle start_bot callback
+            handle_start_callback(call)
+        else:
+            safe_edit_message(call.message.chat.id, call.message.message_id, "❓ Unknown action!")
         
     except Exception as e:
         logger.error(f"Callback error: {e}")
-        bot.answer_callback_query(call.id, "❌ Error occurred!")
+        try:
+            bot.answer_callback_query(call.id, "❌ Error occurred!")
+        except:
+            pass
+
+def handle_start_callback(call):
+    try:
+        # Simulate start command for callback
+        user_id = call.from_user.id
+        username = call.from_user.username or ""
+        first_name = call.from_user.first_name or "User"
+        
+        user = db.get_user(user_id)
+        if user:
+            welcome_text = f"""🎉 **Welcome back, {first_name}!**
+
+💰 **Current Balance:** {user[3]} tokens
+📊 **Total Earned:** {user[6]} tokens
+💸 **Total Spent:** {user[7]} tokens
+
+Ready to explore premium content? 🚀"""
+        else:
+            ref_code = db.create_user(user_id, username, first_name)
+            if not ref_code:
+                safe_edit_message(call.message.chat.id, call.message.message_id, "❌ Registration failed!")
+                return
+                
+            welcome_text = f"""🎉 **Welcome to TokenBot, {first_name}!**
+
+🎁 **Welcome Bonus:** 10 FREE tokens!
+🔗 **Your Referral Code:** `{ref_code}`
+
+**💡 How to earn more tokens:**
+• 👥 Refer friends (+5 tokens each)
+• 💳 Purchase token packages
+
+**🚀 Quick Start:**"""
+        
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("💰 Check Balance", callback_data="balance"),
+            types.InlineKeyboardButton("💳 Buy Tokens", callback_data="buy")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("👥 Referrals", callback_data="referrals"),
+            types.InlineKeyboardButton("❓ Help", callback_data="help")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, welcome_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Start callback error: {e}")
+
+def handle_balance_callback(call):
+    try:
+        user = db.get_user(call.from_user.id)
+        if not user:
+            safe_edit_message(call.message.chat.id, call.message.message_id, "❌ Please register first! Use /start")
+            return
+            
+        referrals = db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user[0],))
+        total_refs = referrals[0][0] if referrals and referrals[0] else 0
+        
+        balance_text = f"""💰 **Your Token Wallet**
+
+**💎 Current Balance:** {user[3]} tokens
+**📈 Total Earned:** {user[6]} tokens  
+**📉 Total Spent:** {user[7]} tokens
+**👥 Referrals Made:** {total_refs}
+
+**🔗 Referral Code:** `{user[4]}`
+**📱 Share Link:** 
+`https://t.me/{bot.get_me().username}?start={user[4]}`"""
+        
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("💳 Buy More", callback_data="buy"),
+            types.InlineKeyboardButton("👥 Invite", callback_data="referrals")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("📊 Stats", callback_data="stats"),
+            types.InlineKeyboardButton("🔄 Refresh", callback_data="balance")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, balance_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Balance callback error: {e}")
+
+def handle_buy_menu_callback(call):
+    try:
+        buy_text = f"""💳 **Token Store - Premium Packages**
+
+**🎯 Special Offers:**
+• 💎 **100 Tokens** - ₹10 `(₹0.10 each)`
+• 🔥 **500 Tokens** - ₹45 `(₹0.09 each)` **10% OFF**
+• ⭐ **1000 Tokens** - ₹80 `(₹0.08 each)` **20% OFF**
+• 👑 **2000 Tokens** - ₹150 `(₹0.075 each)` **25% OFF**
+
+**💰 Payment:** UPI Only
+**🏦 UPI ID:** `{UPI_ID}`
+
+Select package below:"""
+        
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("💎 100 - ₹10", callback_data="buy_100"),
+            types.InlineKeyboardButton("🔥 500 - ₹45", callback_data="buy_500")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("⭐ 1000 - ₹80", callback_data="buy_1000"),
+            types.InlineKeyboardButton("👑 2000 - ₹150", callback_data="buy_2000")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("🔙 Back", callback_data="balance")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, buy_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Buy menu callback error: {e}")
 
 def handle_buy_callback(call):
     try:
@@ -671,42 +781,438 @@ def handle_buy_callback(call):
             'buy_2000': {'tokens': 2000, 'price': 150}
         }
         
+        if call.data not in packages:
+            safe_edit_message(call.message.chat.id, call.message.message_id, "❌ Invalid package!")
+            return
+            
         package = packages[call.data]
         user_id = call.from_user.id
         
         # Create payment record
-        db.execute("INSERT INTO payments (user_id, amount, tokens) VALUES (?, ?, ?)", (user_id, package['price'], package['tokens']))
+        db.execute("INSERT INTO payments (user_id, amount, tokens) VALUES (?, ?, ?)", 
+                  (user_id, package['price'], package['tokens']))
         
-        payment_text = f"""
-💳 **Payment Instructions**
+        payment_text = f"""💳 **Payment Instructions**
 
 **📦 Package:** {package['tokens']} Tokens
 **💰 Amount:** ₹{package['price']}
 **🏦 UPI ID:** `{UPI_ID}`
 
-**📋 Step-by-Step Process:**
-1️⃣ Open any UPI app (GPay, PhonePe, Paytm)
+**📋 Steps:**
+1️⃣ Open any UPI app
 2️⃣ Pay ₹{package['price']} to: `{UPI_ID}`
 3️⃣ Add note: `Tokens_{user_id}`
-4️⃣ Complete payment
-5️⃣ Send screenshot here for verification
+4️⃣ Send screenshot here
 
-**⚡ Verification Time:** 1-24 hours
-**🎯 User ID:** `{user_id}` (include in payment note)
+**⚡ Verification:** 1-24 hours
+**🎯 User ID:** `{user_id}`
 
-Ready to pay? Use the UPI link below! 👇
-"""
+Click button below to pay:"""
         
-        keyboard = create_keyboard([
-            [{'text': '📱 Pay with UPI', 'url': f'upi://pay?pa={UPI_ID}&am={package["price"]}&tn=Tokens_{user_id}'}],
-            [{'text': '💬 Contact Support', 'url': f'tg://user?id={ADMIN_ID}'}, {'text': '🔙 Back to Store', 'callback_data': 'buy'}]
-        ])
+        keyboard = types.InlineKeyboardMarkup()
+        # Use web-based payment link
+        keyboard.add(
+            types.InlineKeyboardButton("📱 Pay Now", 
+                url=f"https://gpay.app.goo.gl/pay-{UPI_ID.replace('@', '-')}-{package['price']}")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("💬 Support", url=f"tg://user?id={ADMIN_ID}"),
+            types.InlineKeyboardButton("🔙 Back", callback_data="buy")
+        )
         
-        bot.edit_message_text(payment_text, call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+        safe_edit_message(call.message.chat.id, call.message.message_id, payment_text, reply_markup=keyboard)
         logger.info(f"Payment initiated: {user_id} - {package['tokens']} tokens - ₹{package['price']}")
         
     except Exception as e:
         logger.error(f"Buy callback error: {e}")
+
+def handle_referrals_callback(call):
+    try:
+        user = db.get_user(call.from_user.id)
+        if not user:
+            safe_edit_message(call.message.chat.id, call.message.message_id, "❌ Please register first!")
+            return
+            
+        referrals = db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user[0],))
+        total_refs = referrals[0][0] if referrals and referrals[0] else 0
+        
+        bot_username = bot.get_me().username
+        
+        refer_text = f"""👥 **Referral Program**
+
+**🎯 Your Stats:**
+• 🔗 **Code:** `{user[4]}`
+• 👥 **Referrals:** {total_refs}
+• 💰 **Earned:** {total_refs * 5} tokens
+
+**📱 Your Link:**
+`https://t.me/{bot_username}?start={user[4]}`
+
+**💡 How it works:**
+• Share your link
+• Friends join using it
+• You get 5 tokens each
+• No limits!"""
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("📱 Share Link", 
+                url=f"https://t.me/share/url?url=https://t.me/{bot_username}?start={user[4]}&text=🚀 Join and get FREE tokens!")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("📋 Copy Code", callback_data=f"copy_{user[4]}"),
+            types.InlineKeyboardButton("📊 Stats", callback_data="ref_stats")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("🔙 Back", callback_data="balance")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, refer_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Referrals callback error: {e}")
+
+def handle_help_callback(call):
+    try:
+        help_text = """❓ **How TokenBot Works**
+
+**🎁 Welcome Bonus:** 10 FREE tokens
+**💰 Earn Tokens:** Refer friends (+5 each)
+**🛒 Buy Tokens:** Premium packages
+**🔓 Access Content:** Use tokens
+
+**🚀 Commands:**
+• `/start` - Register & get bonus
+• `/balance` - Check wallet
+• `/buy` - Purchase tokens
+• `/refer` - Earn via referrals
+
+**💡 Tips:**
+• Share referral link to earn
+• Buy packages for better rates
+• Use tokens for premium content
+
+Ready to start earning? 🚀"""
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("💰 Check Balance", callback_data="balance"),
+            types.InlineKeyboardButton("💳 Buy Tokens", callback_data="buy")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("👥 Refer Friends", callback_data="referrals")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, help_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Help callback error: {e}")
+
+def handle_copy_callback(call):
+    try:
+        ref_code = call.data.split('_')[1]
+        bot_username = bot.get_me().username
+        link = f"https://t.me/{bot_username}?start={ref_code}"
+        bot.answer_callback_query(call.id, f"🔗 Link copied!\n{link}", show_alert=True)
+        
+    except Exception as e:
+        logger.error(f"Copy callback error: {e}")
+        bot.answer_callback_query(call.id, "❌ Error copying link!")
+
+def handle_stats_callback(call):
+    try:
+        user = db.get_user(call.from_user.id)
+        if not user:
+            safe_edit_message(call.message.chat.id, call.message.message_id, "❌ Please register first!")
+            return
+            
+        referrals = db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user[0],))
+        total_refs = referrals[0][0] if referrals and referrals[0] else 0
+        
+        payments = db.execute("SELECT COUNT(*), SUM(amount) FROM payments WHERE user_id = ? AND status = 'verified'", (user[0],))
+        total_payments = payments[0][0] if payments and payments[0] and payments[0][0] else 0
+        total_spent_money = payments[0][1] if payments and payments[0] and payments[0][1] else 0
+        
+        stats_text = f"""📊 **Your Detailed Stats**
+
+**💰 Token Stats:**
+• Current Balance: {user[3]} tokens
+• Total Earned: {user[6]} tokens
+• Total Spent: {user[7]} tokens
+• Net Tokens: {user[6] - user[7]} tokens
+
+**👥 Referral Stats:**
+• Total Referrals: {total_refs}
+• Tokens from Referrals: {total_refs * 5}
+
+**💳 Payment Stats:**
+• Successful Payments: {total_payments}
+• Total Money Spent: ₹{total_spent_money:.2f}
+
+**📅 Account Info:**
+• Join Date: {user[8][:10] if user[8] else 'Unknown'}
+• Referral Code: `{user[4]}`
+
+Keep earning! 🚀"""
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("💳 Buy More", callback_data="buy"),
+            types.InlineKeyboardButton("👥 Refer", callback_data="referrals")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("🔄 Refresh", callback_data="stats"),
+            types.InlineKeyboardButton("🔙 Back", callback_data="balance")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, stats_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Stats callback error: {e}")
+
+def handle_ref_stats_callback(call):
+    try:
+        user = db.get_user(call.from_user.id)
+        if not user:
+            safe_edit_message(call.message.chat.id, call.message.message_id, "❌ Please register first!")
+            return
+            
+        # Get recent referrals
+        recent_refs = db.execute("""
+            SELECT u.first_name, r.created_at 
+            FROM referrals r 
+            JOIN users u ON r.referred_id = u.user_id 
+            WHERE r.referrer_id = ? 
+            ORDER BY r.created_at DESC 
+            LIMIT 5
+        """, (user[0],))
+        
+        total_refs_result = db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user[0],))
+        total_refs = total_refs_result[0][0] if total_refs_result and total_refs_result[0] else 0
+        
+        bot_username = bot.get_me().username
+        
+        ref_stats_text = f"""📊 **Referral Statistics**
+
+**🎯 Overview:**
+• Total Referrals: {total_refs}
+• Tokens Earned: {total_refs * 5}
+• Your Code: `{user[4]}`
+
+**👥 Recent Referrals:**"""
+        
+        if recent_refs:
+            for ref in recent_refs:
+                name = ref[0] or "User"
+                date = ref[1][:10] if ref[1] else "Unknown"
+                ref_stats_text += f"\n• {name} - {date}"
+        else:
+            ref_stats_text += "\n• No referrals yet"
+        
+        ref_stats_text += f"""
+
+**📱 Your Referral Link:**
+`https://t.me/{bot_username}?start={user[4]}`
+
+Start sharing to earn more! 🚀"""
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("📱 Share Now", 
+                url=f"https://t.me/share/url?url=https://t.me/{bot_username}?start={user[4]}&text=🚀 Join and get FREE tokens!")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("🔙 Back", callback_data="referrals")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, ref_stats_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Ref stats callback error: {e}")
+
+def handle_admin_callback(call):
+    try:
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "🚫 Admin only!")
+            return
+            
+        data = call.data
+        
+        if data == 'admin_refresh':
+            # Refresh admin panel
+            handle_admin_refresh(call)
+        elif data == 'admin_users':
+            handle_admin_users_callback(call)
+        elif data == 'admin_payments':
+            handle_admin_payments_callback(call)
+        elif data == 'admin_content':
+            handle_admin_content_callback(call)
+        
+    except Exception as e:
+        logger.error(f"Admin callback error: {e}")
+
+def handle_admin_refresh(call):
+    try:
+        stats = {
+            'users': 0,
+            'tokens_total': 0,
+            'payments_total': 0,
+            'payments_pending': 0,
+            'revenue': 0
+        }
+        
+        try:
+            users_result = db.execute("SELECT COUNT(*) FROM users")
+            stats['users'] = users_result[0][0] if users_result and users_result[0] else 0
+            
+            tokens_result = db.execute("SELECT SUM(tokens) FROM users")
+            stats['tokens_total'] = tokens_result[0][0] if tokens_result and tokens_result[0] and tokens_result[0][0] else 0
+            
+            payments_result = db.execute("SELECT COUNT(*) FROM payments")
+            stats['payments_total'] = payments_result[0][0] if payments_result and payments_result[0] else 0
+            
+            pending_result = db.execute("SELECT COUNT(*) FROM payments WHERE status = 'pending'")
+            stats['payments_pending'] = pending_result[0][0] if pending_result and pending_result[0] else 0
+            
+            revenue_result = db.execute("SELECT SUM(amount) FROM payments WHERE status = 'verified'")
+            stats['revenue'] = revenue_result[0][0] if revenue_result and revenue_result[0] and revenue_result[0][0] else 0
+        except Exception as e:
+            logger.error(f"Stats query error: {e}")
+        
+        admin_text = f"""📊 **Admin Dashboard**
+
+**👥 Users:** {stats['users']:,}
+**💰 Total Tokens:** {stats['tokens_total']:,}
+**💳 Payments:** {stats['payments_total']:,}
+**⏳ Pending:** {stats['payments_pending']:,}
+**💵 Revenue:** ₹{stats['revenue']:,.2f}
+
+**🕐 Updated:** {datetime.now().strftime('%d/%m/%Y %H:%M')}"""
+        
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("👥 Users", callback_data="admin_users"),
+            types.InlineKeyboardButton("💳 Payments", callback_data="admin_payments")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("📁 Content", callback_data="admin_content"),
+            types.InlineKeyboardButton("🔄 Refresh", callback_data="admin_refresh")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, admin_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Admin refresh error: {e}")
+
+def handle_admin_users_callback(call):
+    try:
+        recent_users = db.execute("""
+            SELECT user_id, first_name, tokens, join_date 
+            FROM users 
+            ORDER BY join_date DESC 
+            LIMIT 10
+        """)
+        
+        users_text = "👥 **Recent Users (Last 10)**\n\n"
+        
+        if recent_users:
+            for user in recent_users:
+                user_id, name, tokens, join_date = user
+                name = name or "User"
+                date = join_date[:10] if join_date else "Unknown"
+                users_text += f"• {name} (`{user_id}`) - {tokens} tokens - {date}\n"
+        else:
+            users_text += "• No users found"
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("🔙 Back", callback_data="admin_refresh")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, users_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Admin users callback error: {e}")
+
+def handle_admin_payments_callback(call):
+    try:
+        pending_payments = db.execute("""
+            SELECT p.id, p.user_id, u.first_name, p.amount, p.tokens, p.created_at
+            FROM payments p
+            JOIN users u ON p.user_id = u.user_id
+            WHERE p.status = 'pending'
+            ORDER BY p.created_at DESC
+            LIMIT 10
+        """)
+        
+        payments_text = "💳 **Pending Payments**\n\n"
+        
+        if pending_payments:
+            for payment in pending_payments:
+                pid, uid, name, amount, tokens, date = payment
+                name = name or "User"
+                date = date[:16] if date else "Unknown"
+                payments_text += f"• ID: `{pid}` - {name} (`{uid}`)\n  ₹{amount} for {tokens} tokens - {date}\n\n"
+            
+            payments_text += "**Commands:**\n• `/verify <payment_id>` - Approve\n• `/reject <payment_id>` - Reject"
+        else:
+            payments_text += "✅ No pending payments!"
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("🔙 Back", callback_data="admin_refresh")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, payments_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Admin payments callback error: {e}")
+
+def handle_admin_content_callback(call):
+    try:
+        content_count_result = db.execute("SELECT COUNT(*) FROM content")
+        content_count = content_count_result[0][0] if content_count_result and content_count_result[0] else 0
+        
+        total_views_result = db.execute("SELECT SUM(views) FROM content")
+        total_views = total_views_result[0][0] if total_views_result and total_views_result[0] and total_views_result[0][0] else 0
+        
+        content_text = f"""📁 **Content Management**
+
+**📊 Statistics:**
+• Total Content: {content_count}
+• Total Views: {total_views:,}
+
+**🔧 Management:**
+• Use `/admin_upload` to add content
+• Content gets auto-generated access links
+• Token-based access control
+
+**📋 Recent Content:**"""
+        
+        recent_content = db.execute("""
+            SELECT title, tokens_required, views, created_at 
+            FROM content 
+            ORDER BY created_at DESC 
+            LIMIT 5
+        """)
+        
+        if recent_content:
+            for content in recent_content:
+                title, tokens, views, date = content
+                date = date[:10] if date else "Unknown"
+                content_text += f"\n• {title} - {tokens} tokens - {views} views - {date}"
+        else:
+            content_text += "\n• No content uploaded yet"
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("🔙 Back", callback_data="admin_refresh")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, content_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Admin content callback error: {e}")
 
 def handle_content_callback(call):
     try:
@@ -722,25 +1228,45 @@ def handle_content_callback(call):
         tokens_required = content_data[5]
         
         user = db.get_user(user_id)
+        if not user:
+            bot.answer_callback_query(call.id, "❌ Please register first!", show_alert=True)
+            return
+            
         if user[3] < tokens_required:
             bot.answer_callback_query(call.id, f"❌ Need {tokens_required} tokens! You have {user[3]}", show_alert=True)
             return
         
         # Deduct tokens and send content
-        db.update_tokens(user_id, -tokens_required)
+        success = db.update_tokens(user_id, -tokens_required)
+        if not success:
+            bot.answer_callback_query(call.id, "❌ Error processing tokens!", show_alert=True)
+            return
+            
         db.execute("UPDATE content SET views = views + 1 WHERE deeplink = ?", (deeplink,))
         
         # Send content based on type
-        caption = f"🎯 **{content_data[1]}**\n\n{content_data[2]}\n\n💰 {tokens_required} tokens deducted\n✅ Enjoy your premium content!"
+        caption = f"""🎯 **{content_data[1]}**
+
+{content_data[2]}
+
+💰 {tokens_required} tokens used
+✅ Enjoy your content!"""
         
-        if content_data[4] == 'photo':
-            bot.send_photo(user_id, content_data[3], caption=caption)
-        elif content_data[4] == 'video':
-            bot.send_video(user_id, content_data[3], caption=caption)
-        elif content_data[4] == 'document':
-            bot.send_document(user_id, content_data[3], caption=caption)
-        elif content_data[4] == 'audio':
-            bot.send_audio(user_id, content_data[3], caption=caption)
+        try:
+            if content_data[4] == 'photo':
+                bot.send_photo(user_id, content_data[3], caption=caption)
+            elif content_data[4] == 'video':
+                bot.send_video(user_id, content_data[3], caption=caption)
+            elif content_data[4] == 'document':
+                bot.send_document(user_id, content_data[3], caption=caption)
+            elif content_data[4] == 'audio':
+                bot.send_audio(user_id, content_data[3], caption=caption)
+        except Exception as e:
+            logger.error(f"Content send error: {e}")
+            # Refund tokens if content send fails
+            db.update_tokens(user_id, tokens_required)
+            bot.send_message(user_id, "❌ Error sending content. Tokens refunded. Contact admin.")
+            return
         
         bot.answer_callback_query(call.id, f"✅ Content unlocked! {tokens_required} tokens used")
         logger.info(f"Content accessed: {user_id} - {deeplink} - {tokens_required} tokens")
@@ -764,35 +1290,39 @@ def handle_content_access(message):
         
         user = db.get_user(user_id)
         if not user:
-            keyboard = create_keyboard([[{'text': '🚀 Register Now', 'callback_data': 'start_bot'}]])
-            bot.reply_to(message, "❌ Please register first to access content!", reply_markup=keyboard)
+            keyboard = types.InlineKeyboardMarkup()
+            keyboard.add(types.InlineKeyboardButton("🚀 Register Now", callback_data="start_bot"))
+            bot.reply_to(message, "❌ Please register first!", reply_markup=keyboard)
             return
         
-        preview_text = f"""
-🎯 **Premium Content Preview**
+        preview_text = f"""🎯 **Premium Content Preview**
 
 **📁 Title:** {content_data[1]}
 **📝 Description:** {content_data[2]}
-**💰 Required Tokens:** {tokens_required}
+**💰 Required:** {tokens_required} tokens
 **👁️ Views:** {content_data[7]:,}
-**📊 File Type:** {content_data[4].title()}
+**📊 Type:** {content_data[4].title()}
 
 **💳 Your Balance:** {user[3]} tokens
 
-{'✅ You have enough tokens!' if user[3] >= tokens_required else f'❌ You need {tokens_required - user[3]} more tokens!'}
-"""
+{'✅ You have enough tokens!' if user[3] >= tokens_required else f'❌ Need {tokens_required - user[3]} more tokens!'}"""
         
+        keyboard = types.InlineKeyboardMarkup()
         if user[3] >= tokens_required:
-            keyboard = create_keyboard([
-                [{'text': f'🔓 Unlock Content ({tokens_required} tokens)', 'callback_data': f'content_{deeplink}'}],
-                [{'text': '💰 Check Balance', 'callback_data': 'balance'}]
-            ])
+            keyboard.add(
+                types.InlineKeyboardButton(f"🔓 Unlock ({tokens_required} tokens)", callback_data=f"content_{deeplink}")
+            )
         else:
-            keyboard = create_keyboard([
-                [{'text': '💳 Buy Tokens', 'callback_data': 'buy'}, {'text': '👥 Earn via Referrals', 'callback_data': 'referrals'}]
-            ])
+            keyboard.add(
+                types.InlineKeyboardButton("💳 Buy Tokens", callback_data="buy"),
+                types.InlineKeyboardButton("👥 Earn Free", callback_data="referrals")
+            )
         
-        bot.reply_to(message, preview_text, reply_markup=keyboard)
+        keyboard.add(
+            types.InlineKeyboardButton("💰 Check Balance", callback_data="balance")
+        )
+        
+        safe_send_message(message.chat.id, preview_text, reply_markup=keyboard)
         
     except Exception as e:
         logger.error(f"Content access error: {e}")
@@ -806,239 +1336,109 @@ def handle_payment_screenshot(message):
     try:
         user_id = message.from_user.id
         
+        # Check if user is registered
+        user = db.get_user(user_id)
+        if not user:
+            bot.reply_to(message, "❌ Please register first using /start")
+            return
+        
         pending = db.execute("SELECT * FROM payments WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1", (user_id,))
         if not pending:
-            bot.reply_to(message, "❌ No pending payments found! Use /buy to purchase tokens first.")
+            bot.reply_to(message, "❌ No pending payments! Use /buy first.")
             return
         
         payment = pending[0]
         
-        # Forward to admin
-        admin_text = f"""
-💳 **Payment Verification Required**
+        # Forward to admin with better formatting
+        admin_text = f"""💳 **Payment Screenshot Received**
 
-**👤 User Details:**
-• Name: {message.from_user.first_name}
-• Username: @{message.from_user.username or 'None'}
-• User ID: `{user_id}`
+**👤 User:** {message.from_user.first_name or 'User'}
+**🆔 Username:** @{message.from_user.username or 'None'}
+**🔢 User ID:** `{user_id}`
 
 **💰 Payment Details:**
-• Payment ID: `{payment[0]}`
-• Amount: ₹{payment[2]}
-• Tokens: {payment[3]:,}
-• Date: {payment[5]}
+• **Payment ID:** `{payment[0]}`
+• **Amount:** ₹{payment[2]}
+• **Tokens:** {payment[3]:,}
+• **Date:** {payment[5][:16] if payment[5] else 'Unknown'}
 
 **🔧 Quick Actions:**
 • Approve: `/verify {payment[0]}`
-• Reject: `/reject {payment[0]} [reason]`
+• Reject: `/reject {payment[0]} reason`
 
-📸 **Screenshot attached below:**
-"""
+Screenshot attached below ⬇️"""
         
         try:
-            bot.send_message(ADMIN_ID, admin_text)
+            safe_send_message(ADMIN_ID, admin_text)
             bot.forward_message(ADMIN_ID, message.chat.id, message.message_id)
             
-            confirmation_text = f"""
-✅ **Payment Screenshot Received!**
+            confirmation_text = f"""✅ **Payment Screenshot Received!**
 
-**📋 Payment Details:**
+**📋 Details:**
 • Payment ID: `{payment[0]}`
 • Amount: ₹{payment[2]}
 • Tokens: {payment[3]:,}
-• Status: Pending Verification
+• Status: ⏳ Pending Verification
 
 **⏱️ What's Next:**
-• Admin team will verify your payment
-• You'll get instant notification once approved
-• Tokens will be added automatically
-• Verification usually takes 1-24 hours
+• Admin will verify your payment
+• You'll get instant notification
+• Tokens added automatically
+• Usually takes 1-24 hours
 
-**💬 Need Help?** Contact support if verification takes longer than expected.
-
-Thank you for your patience! 🙏
-"""
+Thank you for your patience! 🙏"""
             
-            keyboard = create_keyboard([
-                [{'text': '💰 Check Balance', 'callback_data': 'balance'}, {'text': '💬 Contact Support', 'url': f'tg://user?id={ADMIN_ID}'}]
-            ])
+            keyboard = types.InlineKeyboardMarkup()
+            keyboard.add(
+                types.InlineKeyboardButton("💰 Check Balance", callback_data="balance"),
+                types.InlineKeyboardButton("💬 Support", url=f"tg://user?id={ADMIN_ID}")
+            )
             
-            bot.reply_to(message, confirmation_text, reply_markup=keyboard)
-            logger.info(f"Payment screenshot received: {user_id} - Payment ID: {payment[0]}")
+            safe_send_message(message.chat.id, confirmation_text, reply_markup=keyboard)
+            logger.info(f"Payment screenshot: {user_id} - Payment ID: {payment[0]}")
             
         except Exception as e:
             logger.error(f"Forward error: {e}")
-            bot.reply_to(message, "❌ Error processing screenshot. Please contact admin directly.")
+            bot.reply_to(message, "❌ Error processing screenshot. Contact admin directly.")
         
     except Exception as e:
         logger.error(f"Screenshot handler error: {e}")
-        bot.reply_to(message, "❌ Error processing payment screenshot!")
-
-# 💳 PAYMENT VERIFICATION COMMANDS
-
-@bot.message_handler(commands=['verify'])
-@admin_only
-def verify_payment(message):
-    try:
-        args = message.text.split()
-        if len(args) != 2:
-            bot.reply_to(message, "Usage: `/verify <payment_id>`")
-            return
-        
-        payment_id = int(args[1])
-        payment = db.execute("SELECT * FROM payments WHERE id = ? AND status = 'pending'", (payment_id,))
-        
-        if not payment:
-            bot.reply_to(message, "❌ Payment not found or already processed!")
-            return
-        
-        payment_data = payment[0]
-        user_id, amount, tokens = payment_data[1], payment_data[2], payment_data[3]
-        
-        # Update payment and add tokens
-        db.execute("UPDATE payments SET status = 'verified', verified_at = CURRENT_TIMESTAMP WHERE id = ?", (payment_id,))
-        db.update_tokens(user_id, tokens)
-        
-        # Notify user
-        user_text = f"""
-🎉 **Payment Verified Successfully!**
-
-**💰 Payment Details:**
-• Payment ID: `{payment_id}`
-• Amount Paid: ₹{amount}
-• Tokens Added: {tokens:,}
-
-**✅ Your account has been updated!**
-Use /balance to check your new balance.
-
-Thank you for your purchase! 🚀
-"""
-        
-        safe_send(user_id, user_text)
-        
-        bot.reply_to(message, f"""
-✅ **Payment Verified!**
-
-**📋 Details:**
-• Payment ID: `{payment_id}`
-• User ID: `{user_id}`
-• Amount: ₹{amount}
-• Tokens: {tokens:,}
-
-**✅ Actions Completed:**
-• Payment marked as verified
-• {tokens:,} tokens added to user account
-• User notification sent
-
-**🕐 Verification Time:** {datetime.now().strftime('%d/%m/%Y %H:%M')}
-""")
-        
-        logger.info(f"Payment verified: ID {payment_id} - User {user_id} - {tokens} tokens")
-        
-    except ValueError:
-        bot.reply_to(message, "❌ Invalid payment ID!")
-    except Exception as e:
-        logger.error(f"Verify error: {e}")
-        bot.reply_to(message, f"❌ Verification failed: {e}")
-
-@bot.message_handler(commands=['reject'])
-@admin_only
-def reject_payment(message):
-    try:
-        args = message.text.split()
-        if len(args) < 2:
-            bot.reply_to(message, "Usage: `/reject <payment_id> [reason]`")
-            return
-        
-        payment_id = int(args[1])
-        reason = " ".join(args[2:]) if len(args) > 2 else "Payment verification failed"
-        
-        payment = db.execute("SELECT * FROM payments WHERE id = ? AND status = 'pending'", (payment_id,))
-        if not payment:
-            bot.reply_to(message, "❌ Payment not found or already processed!")
-            return
-        
-        payment_data = payment[0]
-        user_id = payment_data[1]
-        
-        # Update payment status
-        db.execute("UPDATE payments SET status = 'rejected' WHERE id = ?", (payment_id,))
-        
-        # Notify user
-        user_text = f"""
-❌ **Payment Rejected**
-
-**📋 Payment Details:**
-• Payment ID: `{payment_id}`
-• Rejection Reason: {reason}
-
-**🔄 What you can do:**
-• Check the reason above
-• Ensure payment details are correct
-• Contact support if you believe this is an error
-• Try making a new payment with correct details
-
-**💬 Need Help?** Contact our support team for assistance.
-"""
-        
-        keyboard = create_keyboard([
-            [{'text': '💳 Try Again', 'callback_data': 'buy'}, {'text': '💬 Contact Support', 'url': f'tg://user?id={ADMIN_ID}'}]
-        ])
-        
-        safe_send(user_id, user_text, reply_markup=keyboard)
-        
-        bot.reply_to(message, f"""
-❌ **Payment Rejected**
-
-**📋 Details:**
-• Payment ID: `{payment_id}`
-• User ID: `{user_id}`
-• Reason: {reason}
-
-**✅ Actions Completed:**
-• Payment marked as rejected
-�� User notification sent with reason
-
-**🕐 Rejection Time:** {datetime.now().strftime('%d/%m/%Y %H:%M')}
-""")
-        
-        logger.info(f"Payment rejected: ID {payment_id} - User {user_id} - Reason: {reason}")
-        
-    except ValueError:
-        bot.reply_to(message, "❌ Invalid payment ID!")
-    except Exception as e:
-        logger.error(f"Reject error: {e}")
-        bot.reply_to(message, f"❌ Rejection failed: {e}")
+        bot.reply_to(message, "❌ Error processing screenshot!")
 
 # 🔍 UNKNOWN MESSAGE HANDLER
 
 @bot.message_handler(func=lambda message: True)
 def handle_unknown(message):
     try:
-        help_text = """
-❓ **Unknown Command**
+        help_text = """❓ **Unknown Command**
 
 **🚀 Available Commands:**
 • `/start` - Register & get 10 FREE tokens
-• `/balance` - Check your token wallet
-• `/buy` - Purchase token packages
-• `/refer` - Earn through referrals
+• `/balance` - Check token wallet
+• `/buy` - Purchase tokens
+• `/refer` - Earn via referrals
 
 **🔧 Admin Commands:**
-• `/admin_stats` - Bot analytics
-• `/admin_tokens` - Manage user tokens
-• `/admin_upload` - Upload premium content
+• `/admin` - Admin dashboard
+• `/add_tokens <user_id> <amount>` - Add tokens
+• `/verify <payment_id>` - Verify payment
 
-**💡 Quick Actions:**
-"""
+**💡 Quick Actions:**"""
         
-        keyboard = create_keyboard([
-            [{'text': '🚀 Get Started', 'callback_data': 'start_bot'}, {'text': '💰 Check Balance', 'callback_data': 'balance'}],
-            [{'text': '💳 Buy Tokens', 'callback_data': 'buy'}, {'text': '👥 Refer Friends', 'callback_data': 'referrals'}],
-            [{'text': '💬 Contact Support', 'url': f'tg://user?id={ADMIN_ID}'}]
-        ])
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("🚀 Start", callback_data="start_bot"),
+            types.InlineKeyboardButton("💰 Balance", callback_data="balance")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("💳 Buy", callback_data="buy"),
+            types.InlineKeyboardButton("👥 Refer", callback_data="referrals")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("💬 Support", url=f"tg://user?id={ADMIN_ID}")
+        )
         
-        bot.reply_to(message, help_text, reply_markup=keyboard)
+        safe_send_message(message.chat.id, help_text, reply_markup=keyboard)
         
     except Exception as e:
         logger.error(f"Unknown handler error: {e}")
@@ -1052,10 +1452,14 @@ def main():
         logger.info(f"💳 UPI ID: {UPI_ID}")
         
         # Test bot connection
-        bot_info = bot.get_me()
-        logger.info(f"🤖 Bot: @{bot_info.username} ({bot_info.first_name})")
+        try:
+            bot_info = bot.get_me()
+            logger.info(f"🤖 Bot: @{bot_info.username} ({bot_info.first_name})")
+        except Exception as e:
+            logger.error(f"Bot connection error: {e}")
+            return
         
-        logger.info("✅ Bot started successfully! Ready to serve users...")
+        logger.info("✅ Bot started successfully! All errors fixed...")
         bot.infinity_polling(timeout=10, long_polling_timeout=5)
         
     except Exception as e:

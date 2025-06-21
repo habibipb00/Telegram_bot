@@ -1,4 +1,4 @@
-// Optimized and error-handled version
+#Optimized and error-handled version
 #!/usr/bin/env python3
 """
 🚀 Professional Telegram Bot with Token Economy

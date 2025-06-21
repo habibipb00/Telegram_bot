@@ -881,8 +881,6 @@ def admin_stats_command(message):
             'total_tokens_spent': "SELECT COALESCE(SUM(total_spent), 0) FROM users",
             'total_payments': "SELECT COUNT(*) FROM payments",
             'pending_payments': "SELECT COUNT(*) FROM payments WHERE status = 'pending'",
-</cut_off_point>
-<correct_response>
             'pending_payments': "SELECT COUNT(*) FROM payments WHERE status = 'pending'",
             'verified_payments': "SELECT COUNT(*) FROM payments WHERE status = 'verified'",
             'total_revenue': "SELECT COALESCE(SUM(amount), 0) FROM payments WHERE status = 'verified'",

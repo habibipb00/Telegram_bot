@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-🚀 Professional Telegram Bot with Token Economy - ERROR-FREE VERSION
-Features: Working Buttons, Admin Panel, Referral System, UPI Payments
+🚀 Professional Telegram Bot with Token Economy - ENHANCED VERSION
+Features: Admin Upload System, Auto Channel Posting, Enhanced Admin Powers
 """
 
 import os
@@ -22,7 +22,8 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
 ADMIN_ID = int(os.getenv('ADMIN_ID', 123456789))  # Replace with your admin ID
 UPI_ID = os.getenv('UPI_ID', 'your_upi@bank')
-CHANNEL_ID = os.getenv('CHANNEL_ID', '')
+CHANNEL_ID = os.getenv('CHANNEL_ID', '@your_channel')  # Your main channel
+VIP_CHANNEL_ID = os.getenv('VIP_CHANNEL_ID', '@your_vip_channel')  # Your VIP channel
 
 # Initialize bot
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -34,6 +35,9 @@ logger = logging.getLogger(__name__)
 # Rate limiting
 user_last_action = {}
 RATE_LIMIT = 1
+
+# Admin upload state tracking
+admin_upload_state = {}
 
 # Database class with better error handling
 class TokenBotDB:
@@ -59,7 +63,8 @@ class TokenBotDB:
                     total_earned INTEGER DEFAULT 10,
                     total_spent INTEGER DEFAULT 0,
                     join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_banned INTEGER DEFAULT 0
                 )
             ''')
             
@@ -76,17 +81,19 @@ class TokenBotDB:
                 )
             ''')
             
-            # Content table
+            # Content table - Enhanced
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS content (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT,
                     description TEXT,
-                    file_id TEXT,
+                    poster_file_id TEXT,
+                    video_file_id TEXT,
                     file_type TEXT,
                     tokens_required INTEGER DEFAULT 10,
                     deeplink TEXT UNIQUE,
                     views INTEGER DEFAULT 0,
+                    channel_message_id INTEGER,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -98,6 +105,18 @@ class TokenBotDB:
                     referrer_id INTEGER,
                     referred_id INTEGER,
                     bonus_tokens INTEGER DEFAULT 5,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Admin logs table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS admin_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    admin_id INTEGER,
+                    action TEXT,
+                    target_user_id INTEGER,
+                    details TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -165,6 +184,13 @@ class TokenBotDB:
         except Exception as e:
             logger.error(f"Get user by referral error: {e}")
             return None
+    
+    def log_admin_action(self, admin_id, action, target_user_id=None, details=""):
+        try:
+            self.execute("INSERT INTO admin_logs (admin_id, action, target_user_id, details) VALUES (?, ?, ?, ?)",
+                        (admin_id, action, target_user_id, details))
+        except Exception as e:
+            logger.error(f"Admin log error: {e}")
 
 # Initialize database
 db = TokenBotDB()
@@ -209,6 +235,9 @@ def registered_only(func):
             if not user:
                 start_command(message)
                 return
+            if user[10]:  # Check if banned
+                bot.reply_to(message, "🚫 You are banned from using this bot!")
+                return
             return func(message)
         except Exception as e:
             logger.error(f"Registration check error: {e}")
@@ -222,7 +251,6 @@ def safe_send_message(chat_id, text, reply_markup=None, parse_mode='Markdown'):
     except Exception as e:
         logger.error(f"Send message error: {e}")
         try:
-            # Try without markdown if it fails
             return bot.send_message(chat_id, text, reply_markup=reply_markup)
         except:
             return None
@@ -233,7 +261,6 @@ def safe_edit_message(chat_id, message_id, text, reply_markup=None, parse_mode='
     except Exception as e:
         logger.error(f"Edit message error: {e}")
         try:
-            # Try without markdown if it fails
             return bot.edit_message_text(text, chat_id, message_id, reply_markup=reply_markup)
         except:
             return None
@@ -264,11 +291,18 @@ def start_command(message):
         # Check existing user
         user = db.get_user(user_id)
         if user:
+            if user[10]:  # Check if banned
+                bot.reply_to(message, "🚫 You are banned from using this bot!")
+                return
+                
             welcome_text = f"""🎉 **Welcome back, {first_name}!**
 
 💰 **Current Balance:** {user[3]} tokens
 📊 **Total Earned:** {user[6]} tokens
 💸 **Total Spent:** {user[7]} tokens
+
+**🌟 VIP Channel:** {VIP_CHANNEL_ID}
+*Join for exclusive premium content!*
 
 Ready to explore premium content? 🚀"""
         else:
@@ -287,6 +321,9 @@ Ready to explore premium content? 🚀"""
 • 👥 Refer friends (+5 tokens each)
 • 💳 Purchase token packages
 
+**🌟 VIP Channel:** {VIP_CHANNEL_ID}
+*Join for exclusive premium content!*
+
 **🚀 Quick Start:**"""
             
             if referred_by:
@@ -301,6 +338,9 @@ Ready to explore premium content? 🚀"""
         keyboard.add(
             types.InlineKeyboardButton("👥 Referrals", callback_data="referrals"),
             types.InlineKeyboardButton("❓ Help", callback_data="help")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("🌟 Join VIP Channel", url=VIP_CHANNEL_ID)
         )
         
         safe_send_message(message.chat.id, welcome_text, reply_markup=keyboard)
@@ -333,6 +373,12 @@ def balance_command(message):
 **🔗 Your Referral Code:** `{user[4]}`
 **📱 Share Link:** 
 `https://t.me/{bot.get_me().username}?start={user[4]}`
+
+**💡 UPI Payment Info:**
+• Pay to UPI ID: `{UPI_ID}`
+• Add note: `Tokens_YourUserID`
+• Send screenshot for verification
+• Get tokens within 1-24 hours
 
 💡 *Share your link to earn 5 tokens per referral!*"""
         
@@ -368,13 +414,16 @@ def buy_command(message):
 **💰 Payment Method:** UPI Only
 **🏦 UPI ID:** `{UPI_ID}`
 
-**📋 Purchase Process:**
+**📋 UPI Payment Process:**
 1️⃣ Select package below
-2️⃣ Pay via UPI
-3️⃣ Send payment screenshot
-4️⃣ Get tokens after verification!
+2️⃣ Open any UPI app (GPay, PhonePe, Paytm)
+3️⃣ Pay to UPI ID: `{UPI_ID}`
+4️⃣ Add note: `Tokens_YourUserID`
+5️⃣ Send payment screenshot here
+6️⃣ Get tokens after admin verification!
 
-⚡ *Verification time: 1-24 hours*"""
+⚡ *Verification time: 1-24 hours*
+💡 *Always add your User ID in payment note for faster processing*"""
         
         keyboard = types.InlineKeyboardMarkup(row_width=2)
         keyboard.add(
@@ -444,7 +493,7 @@ def refer_command(message):
         logger.error(f"Refer error: {e}")
         bot.reply_to(message, "❌ Error loading referral info!")
 
-# 🔧 ADMIN COMMANDS
+# 🔧 ENHANCED ADMIN COMMANDS
 
 @bot.message_handler(commands=['admin'])
 @admin_only
@@ -455,7 +504,9 @@ def admin_panel(message):
             'tokens_total': 0,
             'payments_total': 0,
             'payments_pending': 0,
-            'revenue': 0
+            'revenue': 0,
+            'content_total': 0,
+            'banned_users': 0
         }
         
         try:
@@ -473,16 +524,25 @@ def admin_panel(message):
             
             revenue_result = db.execute("SELECT SUM(amount) FROM payments WHERE status = 'verified'")
             stats['revenue'] = revenue_result[0][0] if revenue_result and revenue_result[0] and revenue_result[0][0] else 0
+            
+            content_result = db.execute("SELECT COUNT(*) FROM content")
+            stats['content_total'] = content_result[0][0] if content_result and content_result[0] else 0
+            
+            banned_result = db.execute("SELECT COUNT(*) FROM users WHERE is_banned = 1")
+            stats['banned_users'] = banned_result[0][0] if banned_result and banned_result[0] else 0
+            
         except Exception as e:
             logger.error(f"Stats query error: {e}")
         
-        admin_text = f"""📊 **Admin Dashboard**
+        admin_text = f"""📊 **Enhanced Admin Dashboard**
 
 **👥 Users:** {stats['users']:,}
 **💰 Total Tokens:** {stats['tokens_total']:,}
 **💳 Payments:** {stats['payments_total']:,}
 **⏳ Pending:** {stats['payments_pending']:,}
 **💵 Revenue:** ₹{stats['revenue']:,.2f}
+**📁 Content:** {stats['content_total']:,}
+**🚫 Banned:** {stats['banned_users']:,}
 
 **🕐 Updated:** {datetime.now().strftime('%d/%m/%Y %H:%M')}"""
         
@@ -493,6 +553,13 @@ def admin_panel(message):
         )
         keyboard.add(
             types.InlineKeyboardButton("📁 Content", callback_data="admin_content"),
+            types.InlineKeyboardButton("📤 Upload", callback_data="admin_upload")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("🔨 Moderation", callback_data="admin_moderation"),
+            types.InlineKeyboardButton("📊 Logs", callback_data="admin_logs")
+        )
+        keyboard.add(
             types.InlineKeyboardButton("🔄 Refresh", callback_data="admin_refresh")
         )
         
@@ -500,6 +567,167 @@ def admin_panel(message):
         
     except Exception as e:
         logger.error(f"Admin panel error: {e}")
+        bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['admin_upload'])
+@admin_only
+def admin_upload_command(message):
+    try:
+        upload_text = """📤 **Content Upload System**
+
+**📋 Upload Process:**
+1️⃣ Send poster image first
+2️⃣ Send video file
+3️⃣ Add title and description
+4️⃣ Set token requirement
+5️⃣ Auto-post to channel with deeplink
+
+**✅ Supported Files:**
+• 📷 Poster: JPG, PNG images
+• 🎥 Video: MP4, AVI, MOV files
+• 📄 Documents: PDF, ZIP files
+
+**🚀 Features:**
+• Auto-generated deeplinks
+• Channel posting with buttons
+• View tracking & analytics
+• Token-based access control
+
+Ready to upload? Send poster image first! 📤"""
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("📊 Content Stats", callback_data="admin_content"),
+            types.InlineKeyboardButton("❌ Cancel", callback_data="admin_refresh")
+        )
+        
+        bot.reply_to(message, upload_text, reply_markup=keyboard)
+        
+        # Set upload state
+        admin_upload_state[ADMIN_ID] = {'step': 'waiting_poster'}
+        
+    except Exception as e:
+        logger.error(f"Admin upload command error: {e}")
+        bot.reply_to(message, "❌ Upload initialization failed!")
+
+@bot.message_handler(commands=['ban'])
+@admin_only
+def ban_user_command(message):
+    try:
+        args = message.text.split()
+        if len(args) != 2:
+            bot.reply_to(message, "Usage: `/ban <user_id>`")
+            return
+        
+        user_id = int(args[1])
+        user = db.get_user(user_id)
+        
+        if not user:
+            bot.reply_to(message, f"❌ User {user_id} not found!")
+            return
+        
+        if user[10]:  # Already banned
+            bot.reply_to(message, f"❌ User {user_id} is already banned!")
+            return
+        
+        # Ban user
+        db.execute("UPDATE users SET is_banned = 1 WHERE user_id = ?", (user_id,))
+        db.log_admin_action(ADMIN_ID, "BAN_USER", user_id, f"Banned user {user[2]}")
+        
+        # Notify user
+        try:
+            safe_send_message(user_id, "🚫 **You have been banned from using this bot!**\n\nContact admin if you think this is a mistake.")
+        except:
+            pass
+        
+        bot.reply_to(message, f"✅ **User Banned!**\n\n👤 User: {user[2]} (`{user_id}`)\n🚫 Status: Banned")
+        logger.info(f"Admin banned user: {user_id}")
+        
+    except ValueError:
+        bot.reply_to(message, "❌ Invalid user ID!")
+    except Exception as e:
+        logger.error(f"Ban user error: {e}")
+        bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['unban'])
+@admin_only
+def unban_user_command(message):
+    try:
+        args = message.text.split()
+        if len(args) != 2:
+            bot.reply_to(message, "Usage: `/unban <user_id>`")
+            return
+        
+        user_id = int(args[1])
+        user = db.get_user(user_id)
+        
+        if not user:
+            bot.reply_to(message, f"❌ User {user_id} not found!")
+            return
+        
+        if not user[10]:  # Not banned
+            bot.reply_to(message, f"❌ User {user_id} is not banned!")
+            return
+        
+        # Unban user
+        db.execute("UPDATE users SET is_banned = 0 WHERE user_id = ?", (user_id,))
+        db.log_admin_action(ADMIN_ID, "UNBAN_USER", user_id, f"Unbanned user {user[2]}")
+        
+        # Notify user
+        try:
+            safe_send_message(user_id, "✅ **You have been unbanned!**\n\nYou can now use the bot again. Welcome back!")
+        except:
+            pass
+        
+        bot.reply_to(message, f"✅ **User Unbanned!**\n\n👤 User: {user[2]} (`{user_id}`)\n✅ Status: Active")
+        logger.info(f"Admin unbanned user: {user_id}")
+        
+    except ValueError:
+        bot.reply_to(message, "❌ Invalid user ID!")
+    except Exception as e:
+        logger.error(f"Unban user error: {e}")
+        bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['broadcast'])
+@admin_only
+def broadcast_command(message):
+    try:
+        if len(message.text.split(' ', 1)) < 2:
+            bot.reply_to(message, "Usage: `/broadcast <message>`")
+            return
+        
+        broadcast_text = message.text.split(' ', 1)[1]
+        
+        # Get all users
+        users = db.execute("SELECT user_id, first_name FROM users WHERE is_banned = 0")
+        
+        if not users:
+            bot.reply_to(message, "❌ No users found!")
+            return
+        
+        success_count = 0
+        failed_count = 0
+        
+        bot.reply_to(message, f"📢 **Broadcasting to {len(users)} users...**")
+        
+        for user in users:
+            try:
+                safe_send_message(user[0], f"📢 **Broadcast Message**\n\n{broadcast_text}")
+                success_count += 1
+                time.sleep(0.1)  # Rate limiting
+            except:
+                failed_count += 1
+        
+        db.log_admin_action(ADMIN_ID, "BROADCAST", None, f"Sent to {success_count} users")
+        
+        bot.reply_to(message, f"""✅ **Broadcast Complete!**
+
+📤 **Sent:** {success_count} users
+❌ **Failed:** {failed_count} users
+📊 **Total:** {len(users)} users""")
+        
+    except Exception as e:
+        logger.error(f"Broadcast error: {e}")
         bot.reply_to(message, f"❌ Error: {e}")
 
 @bot.message_handler(commands=['add_tokens'])
@@ -524,6 +752,7 @@ def add_tokens_command(message):
             return
             
         new_balance = user[3] + amount
+        db.log_admin_action(ADMIN_ID, "ADD_TOKENS", user_id, f"Added {amount} tokens")
         
         # Notify user
         try:
@@ -577,6 +806,8 @@ def verify_payment(message):
             bot.reply_to(message, "❌ Failed to add tokens!")
             return
         
+        db.log_admin_action(ADMIN_ID, "VERIFY_PAYMENT", user_id, f"Verified payment {payment_id} - {tokens} tokens")
+        
         # Notify user
         try:
             safe_send_message(user_id, f"""🎉 **Payment Verified!**
@@ -610,7 +841,164 @@ User notified successfully! ✅""")
         logger.error(f"Verify error: {e}")
         bot.reply_to(message, f"❌ Error: {e}")
 
-# 🎯 CALLBACK HANDLERS - COMPLETELY FIXED
+# 📤 ADMIN UPLOAD HANDLERS
+
+@bot.message_handler(content_types=['photo', 'video', 'document'])
+def handle_admin_upload(message):
+    try:
+        if message.from_user.id != ADMIN_ID:
+            return
+        
+        if ADMIN_ID not in admin_upload_state:
+            return
+        
+        state = admin_upload_state[ADMIN_ID]
+        
+        if state['step'] == 'waiting_poster' and message.content_type == 'photo':
+            # Store poster
+            state['poster_file_id'] = message.photo[-1].file_id
+            state['step'] = 'waiting_video'
+            
+            bot.reply_to(message, """✅ **Poster received!**
+
+📹 **Next:** Send the video file
+
+📝 **Note:** Video will be the main content that users unlock with tokens.""")
+            
+        elif state['step'] == 'waiting_video' and message.content_type in ['video', 'document']:
+            # Store video
+            if message.content_type == 'video':
+                state['video_file_id'] = message.video.file_id
+                state['file_type'] = 'video'
+            else:
+                state['video_file_id'] = message.document.file_id
+                state['file_type'] = 'document'
+            
+            state['step'] = 'waiting_details'
+            
+            bot.reply_to(message, """✅ **Video received!**
+
+📝 **Next:** Send content details in this format:
+`Title | Description | Tokens Required`
+
+**Example:**
+`Premium Course | Advanced Python Tutorial | 50`""")
+            
+    except Exception as e:
+        logger.error(f"Admin upload handler error: {e}")
+
+@bot.message_handler(func=lambda message: message.from_user.id == ADMIN_ID and ADMIN_ID in admin_upload_state and admin_upload_state[ADMIN_ID]['step'] == 'waiting_details')
+def handle_upload_details(message):
+    try:
+        if '|' not in message.text:
+            bot.reply_to(message, "❌ Invalid format! Use: `Title | Description | Tokens Required`")
+            return
+        
+        parts = [p.strip() for p in message.text.split('|')]
+        if len(parts) != 3:
+            bot.reply_to(message, "❌ Invalid format! Use: `Title | Description | Tokens Required`")
+            return
+        
+        title, description, tokens_str = parts
+        tokens_required = int(tokens_str)
+        
+        state = admin_upload_state[ADMIN_ID]
+        
+        # Generate deeplink
+        deeplink = hashlib.md5(f"{state['video_file_id']}{time.time()}".encode()).hexdigest()[:12]
+        
+        # Save to database
+        db.execute(
+            "INSERT INTO content (title, description, poster_file_id, video_file_id, file_type, tokens_required, deeplink) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (title, description, state['poster_file_id'], state['video_file_id'], state['file_type'], tokens_required, deeplink)
+        )
+        
+        # Post to channel
+        channel_message_id = post_to_channel(title, description, state['poster_file_id'], deeplink, tokens_required)
+        
+        if channel_message_id:
+            db.execute("UPDATE content SET channel_message_id = ? WHERE deeplink = ?", (channel_message_id, deeplink))
+        
+        access_link = f"https://t.me/{bot.get_me().username}?start=content_{deeplink}"
+        
+        success_text = f"""✅ **Content Uploaded Successfully!**
+
+**📁 Details:**
+• **Title:** {title}
+• **Description:** {description}
+• **Tokens Required:** {tokens_required}
+• **File Type:** {state['file_type'].title()}
+• **Deeplink ID:** `{deeplink}`
+
+**🔗 Access Link:**
+`{access_link}`
+
+**📢 Channel Status:** {'✅ Posted' if channel_message_id else '❌ Failed to post'}
+**📊 Status:** Active & Ready for Users!
+**📅 Upload Time:** {datetime.now().strftime('%d/%m/%Y %H:%M')}
+
+Content is now live and accessible! 🚀"""
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("👁️ Preview", callback_data=f"preview_{deeplink}"),
+            types.InlineKeyboardButton("📊 Stats", callback_data="admin_content")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("📤 Upload More", callback_data="admin_upload"),
+            types.InlineKeyboardButton("🔙 Admin Panel", callback_data="admin_refresh")
+        )
+        
+        bot.reply_to(message, success_text, reply_markup=keyboard)
+        
+        # Clear upload state
+        del admin_upload_state[ADMIN_ID]
+        
+        db.log_admin_action(ADMIN_ID, "UPLOAD_CONTENT", None, f"Uploaded: {title} - {tokens_required} tokens")
+        logger.info(f"Content uploaded: {title} ({deeplink}) - {tokens_required} tokens")
+        
+    except ValueError:
+        bot.reply_to(message, "❌ Invalid token amount! Use a number.")
+    except Exception as e:
+        logger.error(f"Upload details handler error: {e}")
+        bot.reply_to(message, f"❌ Upload failed: {e}")
+
+def post_to_channel(title, description, poster_file_id, deeplink, tokens_required):
+    try:
+        if not CHANNEL_ID:
+            return None
+        
+        bot_username = bot.get_me().username
+        access_link = f"https://t.me/{bot_username}?start=content_{deeplink}"
+        
+        caption = f"""🎯 **{title}**
+
+📝 **Description:** {description}
+
+💰 **Required Tokens:** {tokens_required}
+🔓 **Access:** Click button below
+
+🌟 **Join VIP Channel:** {VIP_CHANNEL_ID}
+
+#premium #content #tokens"""
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton(f"🔓 Unlock Content ({tokens_required} tokens)", url=access_link)
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("🤖 Start Bot", url=f"https://t.me/{bot_username}"),
+            types.InlineKeyboardButton("🌟 VIP Channel", url=VIP_CHANNEL_ID)
+        )
+        
+        message = bot.send_photo(CHANNEL_ID, poster_file_id, caption=caption, reply_markup=keyboard)
+        return message.message_id
+        
+    except Exception as e:
+        logger.error(f"Channel posting error: {e}")
+        return None
+
+# 🎯 ENHANCED CALLBACK HANDLERS
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
@@ -643,8 +1031,9 @@ def handle_callbacks(call):
         elif data.startswith('admin_'):
             handle_admin_callback(call)
         elif data == 'start_bot':
-            # Handle start_bot callback
             handle_start_callback(call)
+        elif data.startswith('preview_'):
+            handle_preview_callback(call)
         else:
             safe_edit_message(call.message.chat.id, call.message.message_id, "❓ Unknown action!")
         
@@ -664,11 +1053,17 @@ def handle_start_callback(call):
         
         user = db.get_user(user_id)
         if user:
+            if user[10]:  # Check if banned
+                safe_edit_message(call.message.chat.id, call.message.message_id, "🚫 You are banned from using this bot!")
+                return
+                
             welcome_text = f"""🎉 **Welcome back, {first_name}!**
 
 💰 **Current Balance:** {user[3]} tokens
 📊 **Total Earned:** {user[6]} tokens
 💸 **Total Spent:** {user[7]} tokens
+
+**🌟 VIP Channel:** {VIP_CHANNEL_ID}
 
 Ready to explore premium content? 🚀"""
         else:
@@ -686,6 +1081,8 @@ Ready to explore premium content? 🚀"""
 • 👥 Refer friends (+5 tokens each)
 • 💳 Purchase token packages
 
+**🌟 VIP Channel:** {VIP_CHANNEL_ID}
+
 **🚀 Quick Start:**"""
         
         keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -696,6 +1093,9 @@ Ready to explore premium content? 🚀"""
         keyboard.add(
             types.InlineKeyboardButton("👥 Referrals", callback_data="referrals"),
             types.InlineKeyboardButton("❓ Help", callback_data="help")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("🌟 Join VIP Channel", url=VIP_CHANNEL_ID)
         )
         
         safe_edit_message(call.message.chat.id, call.message.message_id, welcome_text, reply_markup=keyboard)
@@ -722,7 +1122,12 @@ def handle_balance_callback(call):
 
 **🔗 Referral Code:** `{user[4]}`
 **📱 Share Link:** 
-`https://t.me/{bot.get_me().username}?start={user[4]}`"""
+`https://t.me/{bot.get_me().username}?start={user[4]}`
+
+**💡 UPI Payment Info:**
+• Pay to: `{UPI_ID}`
+• Add note: `Tokens_{user[0]}`
+• Send screenshot for verification"""
         
         keyboard = types.InlineKeyboardMarkup(row_width=2)
         keyboard.add(
@@ -751,6 +1156,9 @@ def handle_buy_menu_callback(call):
 
 **💰 Payment:** UPI Only
 **🏦 UPI ID:** `{UPI_ID}`
+
+**📋 Quick UPI Steps:**
+1. Select package → 2. Pay via UPI → 3. Send screenshot
 
 Select package below:"""
         
@@ -792,27 +1200,27 @@ def handle_buy_callback(call):
         db.execute("INSERT INTO payments (user_id, amount, tokens) VALUES (?, ?, ?)", 
                   (user_id, package['price'], package['tokens']))
         
-        payment_text = f"""💳 **Payment Instructions**
+        payment_text = f"""💳 **UPI Payment Instructions**
 
 **📦 Package:** {package['tokens']} Tokens
 **💰 Amount:** ₹{package['price']}
 **🏦 UPI ID:** `{UPI_ID}`
 
-**📋 Steps:**
-1️⃣ Open any UPI app
+**📋 Step-by-Step Process:**
+1️⃣ Open any UPI app (GPay, PhonePe, Paytm)
 2️⃣ Pay ₹{package['price']} to: `{UPI_ID}`
-3️⃣ Add note: `Tokens_{user_id}`
-4️⃣ Send screenshot here
+3️⃣ **Important:** Add note: `Tokens_{user_id}`
+4️⃣ Complete payment
+5️⃣ Send screenshot here for verification
 
 **⚡ Verification:** 1-24 hours
-**🎯 User ID:** `{user_id}`
+**🎯 Your User ID:** `{user_id}` (must include in payment note)
 
-Click button below to pay:"""
+**💡 Pro Tip:** Adding correct User ID speeds up verification!"""
         
         keyboard = types.InlineKeyboardMarkup()
-        # Use web-based payment link
         keyboard.add(
-            types.InlineKeyboardButton("📱 Pay Now", 
+            types.InlineKeyboardButton("📱 Open GPay", 
                 url=f"https://gpay.app.goo.gl/pay-{UPI_ID.replace('@', '-')}-{package['price']}")
         )
         keyboard.add(
@@ -874,12 +1282,19 @@ def handle_referrals_callback(call):
 
 def handle_help_callback(call):
     try:
-        help_text = """❓ **How TokenBot Works**
+        help_text = f"""❓ **How TokenBot Works**
 
 **🎁 Welcome Bonus:** 10 FREE tokens
 **💰 Earn Tokens:** Refer friends (+5 each)
-**🛒 Buy Tokens:** Premium packages
-**🔓 Access Content:** Use tokens
+**🛒 Buy Tokens:** UPI payment packages
+**🔓 Access Content:** Use tokens for premium content
+
+**💳 UPI Payment Process:**
+1. Select token package
+2. Pay to UPI ID: `{UPI_ID}`
+3. Add note: `Tokens_YourUserID`
+4. Send payment screenshot
+5. Get tokens after verification (1-24 hours)
 
 **🚀 Commands:**
 • `/start` - Register & get bonus
@@ -887,10 +1302,13 @@ def handle_help_callback(call):
 • `/buy` - Purchase tokens
 • `/refer` - Earn via referrals
 
+**🌟 VIP Channel:** {VIP_CHANNEL_ID}
+*Join for exclusive premium content!*
+
 **💡 Tips:**
-• Share referral link to earn
+• Share referral link to earn free tokens
 • Buy packages for better rates
-• Use tokens for premium content
+• Always add User ID in UPI payment note
 
 Ready to start earning? 🚀"""
         
@@ -901,6 +1319,9 @@ Ready to start earning? 🚀"""
         )
         keyboard.add(
             types.InlineKeyboardButton("👥 Refer Friends", callback_data="referrals")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("🌟 Join VIP Channel", url=VIP_CHANNEL_ID)
         )
         
         safe_edit_message(call.message.chat.id, call.message.message_id, help_text, reply_markup=keyboard)
@@ -952,6 +1373,9 @@ def handle_stats_callback(call):
 **📅 Account Info:**
 • Join Date: {user[8][:10] if user[8] else 'Unknown'}
 • Referral Code: `{user[4]}`
+• Status: {'🚫 Banned' if user[10] else '✅ Active'}
+
+**🌟 VIP Channel:** {VIP_CHANNEL_ID}
 
 Keep earning! 🚀"""
         
@@ -1039,7 +1463,6 @@ def handle_admin_callback(call):
         data = call.data
         
         if data == 'admin_refresh':
-            # Refresh admin panel
             handle_admin_refresh(call)
         elif data == 'admin_users':
             handle_admin_users_callback(call)
@@ -1047,6 +1470,12 @@ def handle_admin_callback(call):
             handle_admin_payments_callback(call)
         elif data == 'admin_content':
             handle_admin_content_callback(call)
+        elif data == 'admin_upload':
+            handle_admin_upload_callback(call)
+        elif data == 'admin_moderation':
+            handle_admin_moderation_callback(call)
+        elif data == 'admin_logs':
+            handle_admin_logs_callback(call)
         
     except Exception as e:
         logger.error(f"Admin callback error: {e}")
@@ -1058,7 +1487,9 @@ def handle_admin_refresh(call):
             'tokens_total': 0,
             'payments_total': 0,
             'payments_pending': 0,
-            'revenue': 0
+            'revenue': 0,
+            'content_total': 0,
+            'banned_users': 0
         }
         
         try:
@@ -1076,16 +1507,25 @@ def handle_admin_refresh(call):
             
             revenue_result = db.execute("SELECT SUM(amount) FROM payments WHERE status = 'verified'")
             stats['revenue'] = revenue_result[0][0] if revenue_result and revenue_result[0] and revenue_result[0][0] else 0
+            
+            content_result = db.execute("SELECT COUNT(*) FROM content")
+            stats['content_total'] = content_result[0][0] if content_result and content_result[0] else 0
+            
+            banned_result = db.execute("SELECT COUNT(*) FROM users WHERE is_banned = 1")
+            stats['banned_users'] = banned_result[0][0] if banned_result and banned_result[0] else 0
+            
         except Exception as e:
             logger.error(f"Stats query error: {e}")
         
-        admin_text = f"""📊 **Admin Dashboard**
+        admin_text = f"""📊 **Enhanced Admin Dashboard**
 
 **👥 Users:** {stats['users']:,}
 **💰 Total Tokens:** {stats['tokens_total']:,}
 **💳 Payments:** {stats['payments_total']:,}
 **⏳ Pending:** {stats['payments_pending']:,}
 **💵 Revenue:** ₹{stats['revenue']:,.2f}
+**📁 Content:** {stats['content_total']:,}
+**🚫 Banned:** {stats['banned_users']:,}
 
 **🕐 Updated:** {datetime.now().strftime('%d/%m/%Y %H:%M')}"""
         
@@ -1096,6 +1536,13 @@ def handle_admin_refresh(call):
         )
         keyboard.add(
             types.InlineKeyboardButton("📁 Content", callback_data="admin_content"),
+            types.InlineKeyboardButton("📤 Upload", callback_data="admin_upload")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("🔨 Moderation", callback_data="admin_moderation"),
+            types.InlineKeyboardButton("📊 Logs", callback_data="admin_logs")
+        )
+        keyboard.add(
             types.InlineKeyboardButton("🔄 Refresh", callback_data="admin_refresh")
         )
         
@@ -1104,10 +1551,48 @@ def handle_admin_refresh(call):
     except Exception as e:
         logger.error(f"Admin refresh error: {e}")
 
+def handle_admin_upload_callback(call):
+    try:
+        upload_text = """📤 **Content Upload System**
+
+**📋 Upload Process:**
+1️⃣ Send poster image first
+2️⃣ Send video file
+3️⃣ Add title and description
+4️⃣ Set token requirement
+5️⃣ Auto-post to channel with deeplink
+
+**✅ Supported Files:**
+• 📷 Poster: JPG, PNG images
+• 🎥 Video: MP4, AVI, MOV files
+• 📄 Documents: PDF, ZIP files
+
+**🚀 Features:**
+• Auto-generated deeplinks
+• Channel posting with buttons
+• View tracking & analytics
+• Token-based access control
+
+Ready to upload? Send poster image first! 📤"""
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("📊 Content Stats", callback_data="admin_content"),
+            types.InlineKeyboardButton("🔙 Back", callback_data="admin_refresh")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, upload_text, reply_markup=keyboard)
+        
+        # Set upload state
+        admin_upload_state[ADMIN_ID] = {'step': 'waiting_poster'}
+        
+    except Exception as e:
+        logger.error(f"Admin upload callback error: {e}")
+
 def handle_admin_users_callback(call):
     try:
         recent_users = db.execute("""
-            SELECT user_id, first_name, tokens, join_date 
+            SELECT user_id, first_name, tokens, join_date, is_banned 
             FROM users 
             ORDER BY join_date DESC 
             LIMIT 10
@@ -1117,10 +1602,11 @@ def handle_admin_users_callback(call):
         
         if recent_users:
             for user in recent_users:
-                user_id, name, tokens, join_date = user
+                user_id, name, tokens, join_date, is_banned = user
                 name = name or "User"
                 date = join_date[:10] if join_date else "Unknown"
-                users_text += f"• {name} (`{user_id}`) - {tokens} tokens - {date}\n"
+                status = "🚫 Banned" if is_banned else "✅ Active"
+                users_text += f"• {name} (`{user_id}`) - {tokens} tokens - {date} - {status}\n"
         else:
             users_text += "• No users found"
         
@@ -1186,6 +1672,7 @@ def handle_admin_content_callback(call):
 • Use `/admin_upload` to add content
 • Content gets auto-generated access links
 • Token-based access control
+• Auto-posting to channel
 
 **📋 Recent Content:**"""
         
@@ -1206,6 +1693,7 @@ def handle_admin_content_callback(call):
         
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(
+            types.InlineKeyboardButton("📤 Upload New", callback_data="admin_upload"),
             types.InlineKeyboardButton("🔙 Back", callback_data="admin_refresh")
         )
         
@@ -1213,6 +1701,114 @@ def handle_admin_content_callback(call):
         
     except Exception as e:
         logger.error(f"Admin content callback error: {e}")
+
+def handle_admin_moderation_callback(call):
+    try:
+        banned_users = db.execute("""
+            SELECT user_id, first_name, join_date 
+            FROM users 
+            WHERE is_banned = 1 
+            ORDER BY join_date DESC 
+            LIMIT 10
+        """)
+        
+        moderation_text = """🔨 **Moderation Panel**
+
+**🔧 Available Commands:**
+• `/ban <user_id>` - Ban user
+• `/unban <user_id>` - Unban user
+• `/broadcast <message>` - Send message to all users
+
+**🚫 Banned Users:**"""
+        
+        if banned_users:
+            for user in banned_users:
+                user_id, name, join_date = user
+                name = name or "User"
+                date = join_date[:10] if join_date else "Unknown"
+                moderation_text += f"\n• {name} (`{user_id}`) - Banned on {date}"
+        else:
+            moderation_text += "\n• No banned users"
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("🔙 Back", callback_data="admin_refresh")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, moderation_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Admin moderation callback error: {e}")
+
+def handle_admin_logs_callback(call):
+    try:
+        recent_logs = db.execute("""
+            SELECT action, target_user_id, details, created_at 
+            FROM admin_logs 
+            ORDER BY created_at DESC 
+            LIMIT 10
+        """)
+        
+        logs_text = "📊 **Admin Activity Logs**\n\n"
+        
+        if recent_logs:
+            for log in recent_logs:
+                action, target_user, details, date = log
+                date = date[:16] if date else "Unknown"
+                logs_text += f"• **{action}** - {details} - {date}\n"
+        else:
+            logs_text += "• No logs found"
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("🔙 Back", callback_data="admin_refresh")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, logs_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Admin logs callback error: {e}")
+
+def handle_preview_callback(call):
+    try:
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "🚫 Admin only!")
+            return
+            
+        deeplink = call.data.split('_')[1]
+        content = db.execute("SELECT * FROM content WHERE deeplink = ?", (deeplink,))
+        
+        if not content:
+            bot.answer_callback_query(call.id, "❌ Content not found!", show_alert=True)
+            return
+        
+        content_data = content[0]
+        
+        preview_text = f"""👁️ **Content Preview**
+
+**📁 Title:** {content_data[1]}
+**📝 Description:** {content_data[2]}
+**💰 Tokens Required:** {content_data[6]}
+**👁️ Views:** {content_data[8]:,}
+**📊 Type:** {content_data[5].title()}
+**🔗 Deeplink:** `{content_data[7]}`
+
+**📅 Created:** {content_data[10][:16] if content_data[10] else 'Unknown'}
+**📢 Channel Posted:** {'✅ Yes' if content_data[9] else '❌ No'}
+
+**🔗 Access Link:**
+`https://t.me/{bot.get_me().username}?start=content_{content_data[7]}`"""
+        
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("📊 Content Stats", callback_data="admin_content"),
+            types.InlineKeyboardButton("🔙 Back", callback_data="admin_refresh")
+        )
+        
+        safe_edit_message(call.message.chat.id, call.message.message_id, preview_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"Preview callback error: {e}")
 
 def handle_content_callback(call):
     try:
@@ -1225,11 +1821,15 @@ def handle_content_callback(call):
             return
         
         content_data = content[0]
-        tokens_required = content_data[5]
+        tokens_required = content_data[6]
         
         user = db.get_user(user_id)
         if not user:
             bot.answer_callback_query(call.id, "❌ Please register first!", show_alert=True)
+            return
+            
+        if user[10]:  # Check if banned
+            bot.answer_callback_query(call.id, "🚫 You are banned!", show_alert=True)
             return
             
         if user[3] < tokens_required:
@@ -1244,23 +1844,25 @@ def handle_content_callback(call):
             
         db.execute("UPDATE content SET views = views + 1 WHERE deeplink = ?", (deeplink,))
         
-        # Send content based on type
-        caption = f"""🎯 **{content_data[1]}**
+        # Send poster first
+        try:
+            poster_caption = f"""🎯 **{content_data[1]}**
 
-{content_data[2]}
+📝 **Description:** {content_data[2]}
 
 💰 {tokens_required} tokens used
-✅ Enjoy your content!"""
-        
-        try:
-            if content_data[4] == 'photo':
-                bot.send_photo(user_id, content_data[3], caption=caption)
-            elif content_data[4] == 'video':
-                bot.send_video(user_id, content_data[3], caption=caption)
-            elif content_data[4] == 'document':
-                bot.send_document(user_id, content_data[3], caption=caption)
-            elif content_data[4] == 'audio':
-                bot.send_audio(user_id, content_data[3], caption=caption)
+✅ Enjoy your premium content!
+
+🌟 **Join VIP Channel:** {VIP_CHANNEL_ID}"""
+            
+            bot.send_photo(user_id, content_data[3], caption=poster_caption)
+            
+            # Send main content
+            if content_data[5] == 'video':
+                bot.send_video(user_id, content_data[4], caption="🎥 **Main Content**")
+            elif content_data[5] == 'document':
+                bot.send_document(user_id, content_data[4], caption="📄 **Main Content**")
+                
         except Exception as e:
             logger.error(f"Content send error: {e}")
             # Refund tokens if content send fails
@@ -1286,7 +1888,7 @@ def handle_content_access(message):
             return
         
         content_data = content[0]
-        tokens_required = content_data[5]
+        tokens_required = content_data[6]
         
         user = db.get_user(user_id)
         if not user:
@@ -1295,17 +1897,24 @@ def handle_content_access(message):
             bot.reply_to(message, "❌ Please register first!", reply_markup=keyboard)
             return
         
+        if user[10]:  # Check if banned
+            bot.reply_to(message, "🚫 You are banned from using this bot!")
+            return
+        
         preview_text = f"""🎯 **Premium Content Preview**
 
 **📁 Title:** {content_data[1]}
 **📝 Description:** {content_data[2]}
 **💰 Required:** {tokens_required} tokens
-**👁️ Views:** {content_data[7]:,}
-**📊 Type:** {content_data[4].title()}
+**👁️ Views:** {content_data[8]:,}
+**📊 Type:** {content_data[5].title()}
 
 **💳 Your Balance:** {user[3]} tokens
 
-{'✅ You have enough tokens!' if user[3] >= tokens_required else f'❌ Need {tokens_required - user[3]} more tokens!'}"""
+{'✅ You have enough tokens!' if user[3] >= tokens_required else f'❌ Need {tokens_required - user[3]} more tokens!'}
+
+**🌟 VIP Channel:** {VIP_CHANNEL_ID}
+*Join for exclusive premium content!*"""
         
         keyboard = types.InlineKeyboardMarkup()
         if user[3] >= tokens_required:
@@ -1319,7 +1928,8 @@ def handle_content_access(message):
             )
         
         keyboard.add(
-            types.InlineKeyboardButton("💰 Check Balance", callback_data="balance")
+            types.InlineKeyboardButton("💰 Check Balance", callback_data="balance"),
+            types.InlineKeyboardButton("🌟 Join VIP", url=VIP_CHANNEL_ID)
         )
         
         safe_send_message(message.chat.id, preview_text, reply_markup=keyboard)
@@ -1340,6 +1950,10 @@ def handle_payment_screenshot(message):
         user = db.get_user(user_id)
         if not user:
             bot.reply_to(message, "❌ Please register first using /start")
+            return
+        
+        if user[10]:  # Check if banned
+            bot.reply_to(message, "🚫 You are banned from using this bot!")
             return
         
         pending = db.execute("SELECT * FROM payments WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1", (user_id,))
@@ -1366,6 +1980,8 @@ def handle_payment_screenshot(message):
 • Approve: `/verify {payment[0]}`
 • Reject: `/reject {payment[0]} reason`
 
+**💡 UPI Payment Note Should Include:** `Tokens_{user_id}`
+
 Screenshot attached below ⬇️"""
         
         try:
@@ -1385,6 +2001,8 @@ Screenshot attached below ⬇️"""
 • You'll get instant notification
 • Tokens added automatically
 • Usually takes 1-24 hours
+
+**💡 Pro Tip:** Make sure you added `Tokens_{user_id}` in payment note for faster processing!
 
 Thank you for your patience! 🙏"""
             
@@ -1410,7 +2028,11 @@ Thank you for your patience! 🙏"""
 @bot.message_handler(func=lambda message: True)
 def handle_unknown(message):
     try:
-        help_text = """❓ **Unknown Command**
+        # Check if admin is in upload state
+        if message.from_user.id == ADMIN_ID and ADMIN_ID in admin_upload_state:
+            return  # Let upload handler deal with it
+            
+        help_text = f"""❓ **Unknown Command**
 
 **🚀 Available Commands:**
 • `/start` - Register & get 10 FREE tokens
@@ -1419,9 +2041,20 @@ def handle_unknown(message):
 • `/refer` - Earn via referrals
 
 **🔧 Admin Commands:**
-• `/admin` - Admin dashboard
+• `/admin` - Enhanced admin dashboard
+• `/admin_upload` - Upload content system
 • `/add_tokens <user_id> <amount>` - Add tokens
+• `/ban <user_id>` - Ban user
+• `/unban <user_id>` - Unban user
+• `/broadcast <message>` - Send to all users
 • `/verify <payment_id>` - Verify payment
+
+**💡 UPI Payment Info:**
+• UPI ID: `{UPI_ID}`
+• Add note: `Tokens_YourUserID`
+• Send screenshot for verification
+
+**🌟 VIP Channel:** {VIP_CHANNEL_ID}
 
 **💡 Quick Actions:**"""
         
@@ -1435,7 +2068,8 @@ def handle_unknown(message):
             types.InlineKeyboardButton("👥 Refer", callback_data="referrals")
         )
         keyboard.add(
-            types.InlineKeyboardButton("💬 Support", url=f"tg://user?id={ADMIN_ID}")
+            types.InlineKeyboardButton("💬 Support", url=f"tg://user?id={ADMIN_ID}"),
+            types.InlineKeyboardButton("🌟 VIP Channel", url=VIP_CHANNEL_ID)
         )
         
         safe_send_message(message.chat.id, help_text, reply_markup=keyboard)
@@ -1447,9 +2081,11 @@ def handle_unknown(message):
 
 def main():
     try:
-        logger.info("🚀 TokenBot starting...")
+        logger.info("🚀 Enhanced TokenBot starting...")
         logger.info(f"👑 Admin ID: {ADMIN_ID}")
         logger.info(f"💳 UPI ID: {UPI_ID}")
+        logger.info(f"📢 Channel ID: {CHANNEL_ID}")
+        logger.info(f"🌟 VIP Channel ID: {VIP_CHANNEL_ID}")
         
         # Test bot connection
         try:
@@ -1459,7 +2095,8 @@ def main():
             logger.error(f"Bot connection error: {e}")
             return
         
-        logger.info("✅ Bot started successfully! All errors fixed...")
+        logger.info("✅ Enhanced TokenBot started successfully!")
+        logger.info("🚀 Features: Admin Upload, Auto Channel Posting, Enhanced Admin Powers")
         bot.infinity_polling(timeout=10, long_polling_timeout=5)
         
     except Exception as e:

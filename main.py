@@ -883,7 +883,6 @@ def admin_stats_command(message):
             'pending_payments': "SELECT COUNT(*) FROM payments WHERE status = 'pending'",
 </cut_off_point>
 <correct_response>
-payments",
             'pending_payments': "SELECT COUNT(*) FROM payments WHERE status = 'pending'",
             'verified_payments': "SELECT COUNT(*) FROM payments WHERE status = 'verified'",
             'total_revenue': "SELECT COALESCE(SUM(amount), 0) FROM payments WHERE status = 'verified'",

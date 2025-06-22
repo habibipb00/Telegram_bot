@@ -1444,7 +1444,8 @@ def handle_content_callback(call):
             return
             
         if user == "🚫 You are banned!":
-        show_alert = True
+            show_alert = True
+            return 
             
         if user[3] < tokens_required:
             bot.answer_callback_query(call.id, f"❌ Need {tokens_required} tokens! You have {user[3]}", show_alert=True)
